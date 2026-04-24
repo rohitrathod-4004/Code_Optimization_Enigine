@@ -423,6 +423,115 @@ function escHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── Data Flow Tab ─────────────────────────────────────────────
+function renderDataFlow(instrs, instrLiveIn, instrLiveOut) {
+  const el = document.getElementById('dfTable');
+  if (!el) return;
+  if (!instrs.length) { el.innerHTML = '<div class="pass-no-change">No instructions.</div>'; return; }
+
+  let html = `<table class="df-table">
+    <thead><tr><th>#</th><th>Instruction</th><th>Live-In</th><th>Live-Out</th><th>Status</th></tr></thead><tbody>`;
+  instrs.forEach((ins, i) => {
+    const lIn  = instrLiveIn[i]  ? [...instrLiveIn[i]].join(', ')  || '∅' : '∅';
+    const lOut = instrLiveOut[i] ? [...instrLiveOut[i]].join(', ') || '∅' : '∅';
+    const isDef = ins.result && (ins.op === 'binop' || ins.op === 'assign');
+    const isDead = isDef && instrLiveOut[i] && !instrLiveOut[i].has(ins.result);
+    const statusTxt = isDead ? '⚠ Dead def' : isDef ? '✓ Live' : '—';
+    const rowCls = isDead ? 'df-row-dead' : isDef ? 'df-row-live' : '';
+    html += `<tr class="${rowCls}">
+      <td class="df-num">${i + 1}</td>
+      <td class="df-instr">${escHtml(instrToStr(ins))}</td>
+      <td class="df-set">${escHtml(lIn)}</td>
+      <td class="df-set">${escHtml(lOut)}</td>
+      <td class="df-status">${statusTxt}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+// ── Insights Panel ────────────────────────────────────────────
+function renderInsights(varStats, instrLiveOut) {
+  const el = document.getElementById('insightTable');
+  if (!el) return;
+  const keys = Object.keys(varStats);
+  if (!keys.length) { el.innerHTML = '<div class="pass-no-change">No variables found.</div>'; return; }
+
+  let html = `<table class="df-table">
+    <thead><tr><th>Variable</th><th>Uses</th><th>Defs</th><th>Constant?</th><th>Status</th></tr></thead><tbody>`;
+  for (const v of keys) {
+    const s = varStats[v];
+    const isConst = s.constVal !== null;
+    const isDead  = s.uses === 0;
+    const statusTxt = isDead ? '<span class="df-tag-dead">Unused ✕</span>'
+                    : isConst ? `<span class="df-tag-const">Const = ${escHtml(s.constVal)}</span>`
+                    : '<span class="df-tag-live">Live ✓</span>';
+    const rowCls = isDead ? 'df-row-dead' : isConst ? 'df-row-const' : '';
+    html += `<tr class="${rowCls}">
+      <td class="df-instr">${escHtml(v)}</td>
+      <td class="df-num">${s.uses}</td>
+      <td class="df-num">${s.defs}</td>
+      <td class="df-num">${isConst ? s.constVal : '—'}</td>
+      <td>${statusTxt}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+// ── Report Tab ────────────────────────────────────────────────
+function renderReport(original, passes, optimized, cfgBefore, cfgAfter, oLevel) {
+  const el = document.getElementById('reportContent');
+  if (!el) return;
+
+  const origCount = original.filter(i => i.op !== 'label').length;
+  const optCount  = optimized.filter(i => i.op !== 'label').length;
+  const removed   = origCount - optCount;
+  const pct       = origCount > 0 ? Math.round((removed / origCount) * 100) : 0;
+
+  const levelNames = { 0:'O0 — No optimization', 1:'O1 — Basic passes', 2:'O2 — Full pipeline + LICM' };
+
+  let html = `<div class="report-header">
+    <div class="report-title">📋 Optimization Report</div>
+    <div class="report-level">Level: <strong>${levelNames[oLevel] || 'O2'}</strong></div>
+  </div>`;
+
+  // Per-pass summary
+  html += `<div class="report-section-title">Pass Results</div><div class="report-rows">`;
+  if (!passes.length) {
+    html += `<div class="report-row"><span class="rr-icon">⏭</span><span class="rr-name">No passes applied (O0)</span><span class="rr-val">—</span></div>`;
+  } else {
+    passes.forEach(p => {
+      const cnt = p.changes.length;
+      const icon = cnt > 0 ? '✔' : '—';
+      const cls  = cnt > 0 ? 'rr-applied' : 'rr-skipped';
+      html += `<div class="report-row ${cls}">
+        <span class="rr-icon">${icon}</span>
+        <span class="rr-name">${passIcon(p.name)} ${escHtml(p.name)}</span>
+        <span class="rr-val">${cnt > 0 ? cnt + ' change' + (cnt > 1 ? 's' : '') : 'no change'}</span>
+      </div>`;
+    });
+  }
+  html += '</div>';
+
+  // CFG comparison
+  html += `<div class="report-section-title">CFG Comparison</div><div class="report-cfg-row">
+    <div class="report-cfg-box"><span class="rcb-label">Before</span><span class="rcb-val">${cfgBefore} blocks</span></div>
+    <span class="rcb-arrow">→</span>
+    <div class="report-cfg-box rcb-after"><span class="rcb-label">After</span><span class="rcb-val">${cfgAfter} blocks</span></div>
+  </div>`;
+
+  // Summary stats
+  html += `<div class="report-section-title">Summary</div><div class="report-summary-grid">
+    <div class="rs-card"><span class="rs-label">Instructions Before</span><span class="rs-val">${origCount}</span></div>
+    <div class="rs-card"><span class="rs-label">Instructions After</span><span class="rs-val text-green">${optCount}</span></div>
+    <div class="rs-card"><span class="rs-label">Removed</span><span class="rs-val text-red">${removed}</span></div>
+    <div class="rs-card"><span class="rs-label">Total Reduction</span><span class="rs-val text-cyan">${pct}%</span></div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
 // ── Tab Switching ─────────────────────────────────────────────
 function switchTab(id) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
@@ -430,12 +539,16 @@ function switchTab(id) {
 }
 
 // ── Expose ───────────────────────────────────────────────────
-window.renderTAC      = renderTAC;
-window.renderCFG      = renderCFG;
-window.renderPipeline = renderPipeline;
-window.renderOutput   = renderOutput;
-window.renderMetrics  = renderMetrics;
-window.switchTab      = switchTab;
-window.togglePass     = togglePass;
-window.escHtml        = escHtml;
-window.cfgHighlight   = cfgHighlight;
+window.renderTAC       = renderTAC;
+window.renderCFG       = renderCFG;
+window.renderPipeline  = renderPipeline;
+window.renderOutput    = renderOutput;
+window.renderMetrics   = renderMetrics;
+window.renderDataFlow  = renderDataFlow;
+window.renderInsights  = renderInsights;
+window.renderReport    = renderReport;
+window.switchTab       = switchTab;
+window.togglePass      = togglePass;
+window.escHtml         = escHtml;
+window.cfgHighlight    = cfgHighlight;
+

@@ -19,9 +19,13 @@ function instrToStr(ins) {
     case 'goto':   return `goto ${ins.label}`;
     case 'if':     return `if ${ins.arg1} ${ins.cond} ${ins.arg2} goto ${ins.label}`;
     case 'return': return ins.arg1 ? `return ${ins.arg1}` : `return`;
+    case 'func':   return `func ${ins.label}:`;
+    case 'param':  return `param ${ins.arg1}`;
+    case 'call':   return `call ${ins.label}`;
     default:       return ins.raw || JSON.stringify(ins);
   }
 }
+
 
 function updateRaw(ins) { ins.raw = instrToStr(ins); return ins; }
 
@@ -219,23 +223,47 @@ function copyPropagation(instrs) {
 function runAllPasses(instrs) {
   const passes = [];
   let current = deepClone(instrs);
-
-  const run = (fn) => {
-    const res = fn(current);
-    current = res.instrs;
-    passes.push(res);
-  };
-
+  const run = (fn) => { const res = fn(current); current = res.instrs; passes.push(res); };
   run(constantFolding);
   run(constantPropagation);
   run(algebraicSimplification);
   run(copyPropagation);
   run(commonSubexpressionElimination);
   run(deadCodeElimination);
-
   return { passes, optimized: current };
 }
 
+// ── O-LEVEL RUNNER ────────────────────────────────────────────
+// O0 = none, O1 = basic, O2 = full+LICM
+function runPassesAtLevel(instrs, level, blocks) {
+  if (level === 0) {
+    return { passes: [], optimized: deepClone(instrs), licmResult: null };
+  }
+  if (level === 1) {
+    let current = deepClone(instrs);
+    const passes = [];
+    [constantFolding, algebraicSimplification].forEach(fn => {
+      const r = fn(current); current = r.instrs; passes.push(r);
+    });
+    return { passes, optimized: current, licmResult: null };
+  }
+  // O2: LICM first, then full pipeline
+  const licmResult = applyLICM(instrs, blocks || []);
+  // Build LICM as a display pass
+  const licmPass = {
+    name: licmResult.name,
+    description: licmResult.description,
+    changes: licmResult.changes.map(c => ({ type:'changed', before: c.before, after: c.after, note: c.note })),
+    before: instrs.map(instrToStr),
+    after: licmResult.instrs.map(instrToStr),
+    instrs: licmResult.instrs
+  };
+  const { passes, optimized } = runAllPasses(licmResult.instrs);
+  return { passes: [licmPass, ...passes], optimized, licmResult };
+}
+
 // ── Export ───────────────────────────────────────────────────
-window.runAllPasses = runAllPasses;
-window.instrToStr   = instrToStr;
+window.runAllPasses      = runAllPasses;
+window.runPassesAtLevel  = runPassesAtLevel;
+window.instrToStr        = instrToStr;
+

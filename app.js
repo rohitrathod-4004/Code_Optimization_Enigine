@@ -6,6 +6,8 @@ let currentMode    = 'c';    // 'c' | 'tac'
 let stepModeOn     = false;
 let stepIndex      = 0;
 let allPasses      = [];
+let currentOLevel  = 2;      // 0 | 1 | 2
+let lastInstrs     = [];     // for data-flow re-use
 
 // ── Init ─────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -41,6 +43,21 @@ function clearEditor() {
   updateGutter();
 }
 
+// ── O-Level selector ──────────────────────────────────────────
+const oLevelDescs = {
+  0: 'No optimization (raw IR)',
+  1: 'Basic: Const Folding + Algebraic',
+  2: 'Full pipeline + LICM'
+};
+function setOLevel(n) {
+  currentOLevel = n;
+  [0,1,2].forEach(i => {
+    document.getElementById(`ol-${i}`)?.classList.toggle('active', i === n);
+  });
+  const desc = document.getElementById('oLevelDesc');
+  if (desc) desc.textContent = oLevelDescs[n];
+}
+
 // ── Step mode toggle ──────────────────────────────────────────
 function toggleStepMode() {
   stepModeOn = !stepModeOn;
@@ -67,41 +84,58 @@ function syncGutterScroll() {
 function runOptimizer() {
   const src = document.getElementById('codeEditor').value.trim();
   if (!src) { alert('Please enter some code first.'); return; }
-
-  // Show loading
   showLoading();
-
-  // Simulate async for smooth UX
   setTimeout(() => {
     try {
-      // 1. Parse
       const instrs = parseInput(src, currentMode);
+      lastInstrs = instrs;
 
-      // 2. Build CFG
-      const blocks = buildCFG(instrs);
+      // CFG before
+      const blocksBefore = buildCFG(instrs);
 
-      // 3. Run optimization passes
-      const { passes, optimized } = runAllPasses(instrs);
+      // O-level passes
+      const { passes, optimized, licmResult } = runPassesAtLevel(instrs, currentOLevel, blocksBefore);
       allPasses = passes;
 
-      // 4. Render all tabs
+      // CFG after
+      const blocksAfter = buildCFG(optimized);
+
+      // Liveness + variable stats
+      const { instrLiveIn, instrLiveOut } = computeLiveness(instrs, blocksBefore);
+      const varStats = computeVariableStats(instrs);
+
+      // Function table + execution simulation
+      const funcTable  = parseFunctionTable(instrs);
+      const hasFuncs   = Object.keys(funcTable).length > 0;
+      const { trace: execTrace, finalValue } = hasFuncs
+        ? simulateExecution(funcTable)
+        : { trace: [], finalValue: null };
+
+      // Render all tabs
       renderTAC(instrs);
-      renderCFG(blocks);
+      renderCFG(blocksBefore);
       renderPipeline(passes, stepModeOn);
       renderOutput(optimized);
       renderMetrics(instrs, passes, optimized);
+      renderDataFlow(instrs, instrLiveIn, instrLiveOut);
+      renderInsights(varStats, instrLiveOut);
+      renderReport(instrs, passes, optimized, blocksBefore.length, blocksAfter.length, currentOLevel);
 
-      // 5. Show results
-      document.getElementById('welcomeState').style.display  = 'none';
-      document.getElementById('resultsInner').style.display  = 'flex';
-      document.getElementById('resultsInner').style.flexDirection = 'column';
+      // Execution panels (only if multi-function TAC)
+      renderFunctionsView(funcTable);
+      if (execTrace.length) {
+        initExecTrace(execTrace);
+        renderReturnValues(execTrace);
+      } else {
+        const ep = document.getElementById('execTracePanel');
+        if (ep) ep.innerHTML = '<div class="pass-no-change">Use <strong>Multi-Function</strong> TAC sample to see execution simulation.</div>';
+        renderCallStack([]);
+        const rp = document.getElementById('retvalPanel');
+        if (rp) rp.innerHTML = '<div class="pass-no-change">No function calls detected.</div>';
+      }
 
-      // Switch to IR tab by default
       switchTab('ir');
-
-      // If step mode, show overlay
       if (stepModeOn) openStepMode();
-
     } catch (e) {
       console.error(e);
       alert('Parse error: ' + e.message);
@@ -112,25 +146,23 @@ function runOptimizer() {
 function showLoading() {
   document.getElementById('welcomeState').style.display = 'none';
   const ri = document.getElementById('resultsInner');
-  ri.style.display = 'flex';
-  ri.style.flexDirection = 'column';
+  ri.style.display = 'flex'; ri.style.flexDirection = 'column';
   ri.innerHTML = `
     <div class="tabs-bar" id="tabsBar">
-      <button class="tab active" data-tab="ir" onclick="switchTab('ir')">📋 IR / TAC</button>
-      <button class="tab" data-tab="cfg" onclick="switchTab('cfg')">🔀 CFG</button>
-      <button class="tab" data-tab="pipeline" onclick="switchTab('pipeline')">⚙️ Pipeline</button>
-      <button class="tab" data-tab="output" onclick="switchTab('output')">✅ Output</button>
-      <button class="tab" data-tab="metrics" onclick="switchTab('metrics')">📊 Metrics</button>
+      <button class="tab active" data-tab="ir"       onclick="switchTab('ir')">📋 IR / TAC</button>
+      <button class="tab"        data-tab="cfg"      onclick="switchTab('cfg')">🔀 CFG</button>
+      <button class="tab"        data-tab="pipeline" onclick="switchTab('pipeline')">⚙️ Pipeline</button>
+      <button class="tab"        data-tab="output"   onclick="switchTab('output')">✅ Output</button>
+      <button class="tab"        data-tab="metrics"  onclick="switchTab('metrics')">📊 Metrics</button>
+      <button class="tab"        data-tab="dataflow" onclick="switchTab('dataflow')">🔬 Data Flow</button>
+      <button class="tab"        data-tab="report"   onclick="switchTab('report')">📈 Report</button>
+      <button class="tab"        data-tab="functions" onclick="switchTab('functions')">🔧 Functions</button>
+      <button class="tab"        data-tab="execution" onclick="switchTab('execution')">▶ Execution</button>
     </div>
+
     <div class="tab-content active" id="tab-ir">
       <div class="section-label">Generated Three-Address Code (TAC)</div>
-      <div class="tac-grid" id="tacGrid">
-        <div style="display:flex;gap:.35rem;padding:1.5rem;justify-content:center">
-          <span style="width:8px;height:8px;border-radius:50%;background:var(--purple);animation:pulse 1.2s ease-in-out infinite;display:block"></span>
-          <span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);animation:pulse 1.2s ease-in-out infinite .2s;display:block"></span>
-          <span style="width:8px;height:8px;border-radius:50%;background:var(--green);animation:pulse 1.2s ease-in-out infinite .4s;display:block"></span>
-        </div>
-      </div>
+      <div class="tac-grid" id="tacGrid"></div>
     </div>
     <div class="tab-content" id="tab-cfg">
       <div class="section-label">Control Flow Graph</div>
@@ -147,14 +179,8 @@ function showLoading() {
     </div>
     <div class="tab-content" id="tab-output">
       <div class="output-split">
-        <div>
-          <div class="section-label">Optimized TAC</div>
-          <div class="code-block" id="optimizedTAC"></div>
-        </div>
-        <div>
-          <div class="section-label">Reconstructed C-like Code</div>
-          <div class="code-block" id="reconstructedC"></div>
-        </div>
+        <div><div class="section-label">Optimized TAC</div><div class="code-block" id="optimizedTAC"></div></div>
+        <div><div class="section-label">Reconstructed C-like Code</div><div class="code-block" id="reconstructedC"></div></div>
       </div>
     </div>
     <div class="tab-content" id="tab-metrics">
@@ -162,6 +188,40 @@ function showLoading() {
       <div class="metrics-grid" id="metricsGrid"></div>
       <div class="section-label" style="margin-top:2rem">Optimization Details</div>
       <div class="opt-details" id="optDetails"></div>
+    </div>
+    <div class="tab-content" id="tab-dataflow">
+      <div class="section-label">Live Variable Analysis — Backward Dataflow</div>
+      <div id="dfTable"></div>
+      <div class="section-label" style="margin-top:2rem">Variable Insight Panel</div>
+      <div id="insightTable"></div>
+    </div>
+    <div class="tab-content" id="tab-report">
+      <div id="reportContent"></div>
+    </div>
+    <div class="tab-content" id="tab-functions">
+      <div class="section-label">Function Definitions (TAC per function)</div>
+      <div id="funcViewContainer"></div>
+    </div>
+    <div class="tab-content" id="tab-execution">
+      <div class="exec-layout">
+        <div class="exec-left">
+          <div class="section-label">Execution Trace</div>
+          <div class="exec-controls">
+            <button class="btn btn-secondary btn-sm" id="execPrevBtn" onclick="execStepBack()">◀ Prev</button>
+            <span class="step-indicator" id="execStepCounter">Step 1 / 1</span>
+            <button class="btn btn-primary btn-sm" id="execNextBtn" onclick="execStepForward()">Next ▶</button>
+            <button class="btn btn-ghost btn-sm" onclick="execStepFirst()">⇤ First</button>
+            <button class="btn btn-ghost btn-sm" onclick="execStepLast()">Last ⇥</button>
+          </div>
+          <div class="exec-trace-wrap" id="execTracePanel"></div>
+          <div class="section-label" style="margin-top:1.25rem">Return Values</div>
+          <div id="retvalPanel"></div>
+        </div>
+        <div class="exec-right">
+          <div class="section-label">Call Stack</div>
+          <div id="callStackPanel"></div>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -246,16 +306,21 @@ function passIcon(name) {
 }
 
 // Expose globals
-window.switchMode    = switchMode;
-window.loadSample    = loadSample;
-window.clearEditor   = clearEditor;
-window.toggleStepMode = toggleStepMode;
-window.updateGutter  = updateGutter;
+window.switchMode       = switchMode;
+window.loadSample       = loadSample;
+window.clearEditor      = clearEditor;
+window.toggleStepMode   = toggleStepMode;
+window.updateGutter     = updateGutter;
 window.syncGutterScroll = syncGutterScroll;
-window.runOptimizer  = runOptimizer;
-window.stepForward   = stepForward;
-window.stepBack      = stepBack;
-window.openStepMode  = openStepMode;
-window.closeStepMode = closeStepMode;
-window.stepModalNext = stepModalNext;
-window.stepModalBack = stepModalBack;
+window.runOptimizer     = runOptimizer;
+window.stepForward      = stepForward;
+window.stepBack         = stepBack;
+window.openStepMode     = openStepMode;
+window.closeStepMode    = closeStepMode;
+window.stepModalNext    = stepModalNext;
+window.stepModalBack    = stepModalBack;
+window.setOLevel        = setOLevel;
+window.execStepForward  = execStepForward;
+window.execStepBack     = execStepBack;
+window.execStepFirst    = execStepFirst;
+window.execStepLast     = execStepLast;

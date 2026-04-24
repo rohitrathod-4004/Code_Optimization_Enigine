@@ -61,6 +61,17 @@
       <button class="btn btn-ghost btn-sm" onclick="loadSample('branching')">Branching</button>
       <button class="btn btn-ghost btn-sm" onclick="loadSample('loop')">Loop</button>
       <button class="btn btn-ghost btn-sm" onclick="loadSample('algo')">Algorithm</button>
+      <button class="btn btn-ghost btn-sm" style="border-color:rgba(0,217,255,.4);color:var(--cyan)" onclick="switchMode('tac');loadSample('multifunc')">&#128296; Multi-Func</button>
+    </div>
+
+    <div class="olevel-row">
+      <span class="olevel-label">Opt Level:</span>
+      <div class="olevel-group">
+        <button class="olevel-btn" id="ol-0" onclick="setOLevel(0)" title="No optimization">O0</button>
+        <button class="olevel-btn" id="ol-1" onclick="setOLevel(1)" title="Basic passes only">O1</button>
+        <button class="olevel-btn active" id="ol-2" onclick="setOLevel(2)" title="Full pipeline + LICM">O2</button>
+      </div>
+      <span class="olevel-desc" id="oLevelDesc">Full pipeline + LICM</span>
     </div>
 
     <div class="editor-wrapper">
@@ -191,7 +202,11 @@
 <script src="parser.js"></script>
 <script src="optimizer.js"></script>
 <script src="cfg.js"></script>
+<script src="dataflow.js"></script>
+<script src="licm.js"></script>
+<script src="funcruntime.js"></script>
 <script src="ui.js"></script>
+<script src="ui_exec.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

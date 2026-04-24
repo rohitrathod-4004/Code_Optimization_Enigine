@@ -37,6 +37,20 @@ function parseSingleTACLine(raw, id) {
   const line = raw.trim();
   if (!line || line.startsWith('//')) return null;
 
+  // func name:
+  if (/^func\s+\w+\s*:?\s*$/.test(line)) {
+    const name = line.replace(/^func\s+/, '').replace(/:?\s*$/, '').trim();
+    return { id, op:'func', label: name, raw: line };
+  }
+
+  // param var
+  if (/^param\s+\S+$/.test(line))
+    return { id, op:'param', arg1: line.split(/\s+/)[1], raw: line };
+
+  // call name
+  if (/^call\s+\w+$/.test(line))
+    return { id, op:'call', label: line.split(/\s+/)[1], raw: line };
+
   // label:
   if (/^[A-Za-z_]\w*:$/.test(line))
     return { id, op:'label', label: line.slice(0,-1), raw: line };
@@ -59,12 +73,13 @@ function parseSingleTACLine(raw, id) {
   const binM = line.match(/^(\S+)\s*=\s*(\S+)\s*([+\-*\/%])\s*(\S+)$/);
   if (binM) return { id, op:'binop', result:binM[1], arg1:binM[2], operator:binM[3], arg2:binM[4], raw:line };
 
-  // result = arg1  (simple assign)
+  // result = arg1  (simple assign, also catches: x = retval)
   const assM = line.match(/^(\S+)\s*=\s*(\S+)$/);
   if (assM) return { id, op:'assign', result:assM[1], arg1:assM[2], raw:line };
 
   return { id, op:'unknown', raw:line };
 }
+
 
 // ============================================================
 //  SIMPLIFIED C-LIKE PARSER

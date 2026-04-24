@@ -174,6 +174,36 @@ goto L_fib_loop
 L_fib_end:
 result = b * 1
 unused = a + 0
-return result`
+return result`,
+
+    // ── 5. Multi-Function (call stack demo) ───────────────────
+    multifunc: `// Multi-function: sum + square + main
+// Shows function calls, parameter passing, call stack
+func sum:
+param a
+param b
+t1 = a + b
+dead1 = t1 + 0
+result = t1 * 1
+return result
+
+func square:
+param n
+t2 = n * n
+waste = t2 * 1
+return t2
+
+func main:
+x = 3
+y = 4
+param x
+param y
+call sum
+s = retval
+param s
+call square
+ans = retval
+return ans`
   }
 };
+
