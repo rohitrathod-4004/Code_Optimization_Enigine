@@ -91,7 +91,7 @@ function parseCLike(lines) {
     }
     // goto
     if (/^goto\s+\w+/.test(tl)) {
-      emit({ op:'goto', label: tl.split(/\s+/)[1], raw: tl }); continue;
+      emit({ op:'goto', label: tl.split(/\s+/)[1].replace(/;$/, ''), raw: tl }); continue;
     }
     // return
     if (/^return(\s+.*)?;?$/.test(tl)) {

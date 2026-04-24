@@ -82,9 +82,17 @@
     <div class="input-actions">
       <button class="btn btn-secondary" onclick="clearEditor()">✕ Clear</button>
       <div style="flex:1"></div>
+      <!-- Optimization level picker -->
+      <div class="opt-level-picker" id="optLevelPicker">
+        <span class="opt-level-label">Level:</span>
+        <button class="opt-level-btn" id="lvl-O0" onclick="setOptLevel('O0')">O0</button>
+        <button class="opt-level-btn" id="lvl-O1" onclick="setOptLevel('O1')">O1</button>
+        <button class="opt-level-btn active" id="lvl-O2" onclick="setOptLevel('O2')">O2</button>
+        <button class="opt-level-btn" id="lvl-O3" onclick="setOptLevel('O3')">O3</button>
+      </div>
       <label class="toggle-row">
-        <span class="toggle-label">Step-by-Step</span>
-        <div class="toggle-switch" id="stepToggle" onclick="toggleStepMode()">
+        <span class="toggle-label">🎓 Guided Mode</span>
+        <div class="toggle-switch" id="stepToggle" onclick="toggleGuidedMode()">
           <div class="toggle-knob"></div>
         </div>
       </label>
@@ -117,14 +125,51 @@
         <button class="tab active" data-tab="ir" onclick="switchTab('ir')">📋 IR / TAC</button>
         <button class="tab" data-tab="cfg" onclick="switchTab('cfg')">🔀 CFG</button>
         <button class="tab" data-tab="pipeline" onclick="switchTab('pipeline')">⚙️ Pipeline</button>
+        <button class="tab" data-tab="compare" onclick="switchTab('compare')">⚖️ Compare</button>
         <button class="tab" data-tab="output" onclick="switchTab('output')">✅ Output</button>
         <button class="tab" data-tab="metrics" onclick="switchTab('metrics')">📊 Metrics</button>
+        <button class="tab" data-tab="execute" onclick="switchTab('execute')">▶ Execute</button>
+        <button class="tab" data-tab="about" onclick="switchTab('about')">ℹ️ About</button>
       </div>
 
       <!-- TAB: IR -->
       <div class="tab-content active" id="tab-ir">
         <div class="section-label">Generated Three-Address Code (TAC)</div>
         <div class="tac-grid" id="tacGrid"></div>
+      </div>
+
+      <!-- TAB: COMPARE -->
+      <div class="tab-content" id="tab-compare">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
+          <div style="display:flex; gap:1rem; align-items:center;">
+            <label>Left:
+              <select id="compareLeftSel" onchange="updateCompareView()" style="padding:.2rem; border-radius:4px; border:1px solid var(--border);">
+                <option value="O0" selected>O0</option>
+                <option value="O1">O1</option>
+                <option value="O2">O2</option>
+                <option value="O3">O3</option>
+              </select>
+            </label>
+            <label>Right:
+              <select id="compareRightSel" onchange="updateCompareView()" style="padding:.2rem; border-radius:4px; border:1px solid var(--border);">
+                <option value="O0">O0</option>
+                <option value="O1">O1</option>
+                <option value="O2">O2</option>
+                <option value="O3" selected>O3</option>
+              </select>
+            </label>
+          </div>
+          <div style="font-size:.75rem; display:flex; gap:1rem;">
+            <span><span style="display:inline-block;width:10px;height:10px;background:rgba(255,80,80,0.5);margin-right:4px;"></span>Removed</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:rgba(255,220,80,0.6);margin-right:4px;"></span>Modified</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:rgba(80,255,120,0.5);margin-right:4px;"></span>Added</span>
+          </div>
+        </div>
+        <div class="diff-container" style="margin-bottom:.5rem; font-weight:bold; border-bottom:1px solid var(--border); padding-bottom:.2rem;">
+          <div>Left (<span id="compareLeftLabel">O0</span>)</div>
+          <div>Right (<span id="compareRightLabel">O3</span>)</div>
+        </div>
+        <div id="compareGrid"></div>
       </div>
 
       <!-- TAB: CFG -->
@@ -166,32 +211,69 @@
         <div class="opt-details" id="optDetails"></div>
       </div>
 
+      <!-- TAB: EXECUTE -->
+      <div class="tab-content" id="tab-execute"></div>
+
+      <!-- TAB: ABOUT -->
+      <div class="tab-content" id="tab-about" style="padding:2rem 1.5rem;">
+        <div class="section-label" style="font-size:1.4rem; color:var(--text-primary); margin-bottom:.5rem;">Code Optimization Engine</div>
+        <p style="color:var(--text-secondary); margin-bottom:1.5rem; line-height:1.6; max-width:600px;">
+          This project implements a compiler optimization engine using TAC, CFG, and Data Flow Analysis.
+        </p>
+        
+        <div style="display:flex; gap:4rem; margin-top:2rem;">
+          <div>
+            <div style="font-weight:bold; color:var(--cyan); margin-bottom:1rem; letter-spacing:0.04em; text-transform:uppercase; font-size:0.85rem;">Key Features</div>
+            <ul style="list-style:none; padding:0; display:flex; flex-direction:column; gap:.7rem; color:var(--text-secondary); font-size:.9rem;">
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> TAC generation</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Control Flow Graph</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Live Variable Analysis</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Optimization Levels (O0–O3)</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Execution Engine</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Metrics & Comparison</li>
+              <li style="display:flex; align-items:center; gap:.5rem;"><span style="color:var(--green)">✓</span> Guided Mode</li>
+            </ul>
+          </div>
+          <div>
+            <div style="font-weight:bold; color:var(--purple); margin-bottom:1rem; letter-spacing:0.04em; text-transform:uppercase; font-size:0.85rem;">Tech Stack</div>
+            <div style="display:flex; gap:.5rem;">
+              <span style="background:rgba(255,255,255,0.05); padding:.3rem .8rem; border-radius:100px; font-size:.85rem; border:1px solid var(--border);">HTML</span>
+              <span style="background:rgba(255,255,255,0.05); padding:.3rem .8rem; border-radius:100px; font-size:.85rem; border:1px solid var(--border);">CSS</span>
+              <span style="background:rgba(255,255,255,0.05); padding:.3rem .8rem; border-radius:100px; font-size:.85rem; border:1px solid var(--border);">JavaScript</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </section>
 
 </main>
 
-<!-- Step Mode Overlay -->
-<div class="step-overlay" id="stepOverlay" style="display:none">
+<!-- Guided Mode Overlay -->
+<div class="step-overlay" id="guided-panel" style="display:none">
   <div class="step-modal">
     <div class="step-modal-header">
-      <span class="step-modal-title" id="stepModalTitle">Optimization Step</span>
-      <button class="btn btn-ghost btn-sm" onclick="closeStepMode()">✕ Close</button>
+      <span class="step-modal-title" id="stepModalTitle">Current Pass Name</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeGuidedMode()">✕ Close</button>
     </div>
     <div class="step-modal-body" id="stepModalBody"></div>
     <div class="step-modal-footer">
-      <button class="btn btn-secondary" onclick="stepModalBack()" id="stepModalBackBtn">◀ Previous</button>
-      <span class="step-modal-counter" id="stepModalCounter">1 / 6</span>
-      <button class="btn btn-primary" onclick="stepModalNext()" id="stepModalNextBtn">Next ▶</button>
+      <button class="btn btn-secondary" onclick="guidedModalBack()" id="stepModalBackBtn">[ Previous ]</button>
+      <span class="step-modal-counter" id="stepModalCounter"></span>
+      <button class="btn btn-primary" onclick="guidedModalNext()" id="stepModalNextBtn">[ Next ]</button>
     </div>
   </div>
 </div>
 
-<script src="samples.js"></script>
-<script src="parser.js"></script>
-<script src="optimizer.js"></script>
-<script src="cfg.js"></script>
-<script src="ui.js"></script>
-<script src="app.js"></script>
+<script src="samples.js?v=18"></script>
+<script src="parser.js?v=18"></script>
+<script src="optimizer.js?v=18"></script>
+<script src="cfg.js?v=18"></script>
+<script src="dataflow.js?v=18"></script>
+<script src="metrics.js?v=18"></script>
+<script src="executor.js?v=18"></script>
+<script src="ui.js?v=18"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

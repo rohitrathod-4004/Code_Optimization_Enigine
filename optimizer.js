@@ -45,7 +45,7 @@ function constantFolding(instrs) {
         ins.op = 'assign'; ins.arg1 = String(val); delete ins.arg2; delete ins.operator;
         updateRaw(ins);
         changes.push({ type:'changed', before: old, after: instrToStr(ins),
-          note: `${a} ${op} ${b} = ${val}` });
+          note: `${a} ${op} ${b} = ${val}`, reason: 'Computed constant expression' });
       }
     }
   }
@@ -59,16 +59,16 @@ function constantPropagation(instrs) {
   const before = instrs.map(instrToStr);
   const result = deepClone(instrs);
   const changes = [];
-  const constMap = {};
-
-  // Build initial constant map from assign instructions
-  for (const ins of result) {
-    if (ins.op === 'assign' && isNum(ins.arg1)) constMap[ins.result] = ins.arg1;
-  }
+  let constMap = {};
 
   for (const ins of result) {
     let changed = false;
     const old = instrToStr(ins);
+
+    // Block boundary: clear map to prevent unsafe cross-iteration propagation
+    if (ins.op === 'label') {
+      constMap = {};
+    }
 
     const sub = (val) => {
       if (!isNum(val) && constMap[val] !== undefined) { changed = true; return constMap[val]; }
@@ -85,7 +85,7 @@ function constantPropagation(instrs) {
     else if (ins.op === 'assign') delete constMap[ins.result];
     else if (ins.op === 'binop') delete constMap[ins.result];
 
-    if (changed) { updateRaw(ins); changes.push({ type:'changed', before: old, after: instrToStr(ins), note:'constant substituted' }); }
+    if (changed) { updateRaw(ins); changes.push({ type:'changed', before: old, after: instrToStr(ins), note:'constant substituted', reason: 'Replaced variable with constant value' }); }
   }
   return { name:'Constant Propagation', changes, before, after: result.map(instrToStr),
     instrs: result,
@@ -119,7 +119,7 @@ function algebraicSimplification(instrs) {
     if (simplified !== null) {
       ins.op = 'assign'; ins.arg1 = simplified; delete ins.arg2; delete ins.operator;
       updateRaw(ins);
-      changes.push({ type:'changed', before: old, after: instrToStr(ins), note });
+      changes.push({ type:'changed', before: old, after: instrToStr(ins), note, reason: 'Simplified algebraic expression' });
     }
   }
   return { name:'Algebraic Simplification', changes, before, after: result.map(instrToStr),
@@ -132,9 +132,12 @@ function commonSubexpressionElimination(instrs) {
   const before = instrs.map(instrToStr);
   const result = deepClone(instrs);
   const changes = [];
-  const exprMap = {}; // "arg1 op arg2" → result variable
+  let exprMap = {}; // "arg1 op arg2" → result variable
 
   for (const ins of result) {
+    if (ins.op === 'label') {
+      exprMap = {}; // Block boundary: clear map to be safe
+    }
     if (ins.op !== 'binop') continue;
     const key = `${ins.arg1}${ins.operator}${ins.arg2}`;
     const old = instrToStr(ins);
@@ -142,7 +145,7 @@ function commonSubexpressionElimination(instrs) {
       const prev = exprMap[key];
       ins.op = 'assign'; ins.arg1 = prev; delete ins.arg2; delete ins.operator;
       updateRaw(ins);
-      changes.push({ type:'changed', before: old, after: instrToStr(ins), note:`reuses ${prev}` });
+      changes.push({ type:'changed', before: old, after: instrToStr(ins), note:`reuses ${prev}`, reason: 'Reused previously computed expression' });
     } else {
       exprMap[key] = ins.result;
     }
@@ -152,34 +155,69 @@ function commonSubexpressionElimination(instrs) {
     description:'Detects repeated computations and replaces them with a reference to the first computed result.' };
 }
 
-// ── 5. DEAD CODE ELIMINATION ──────────────────────────────────
+// ── 5. DEAD CODE ELIMINATION (LVA-based) ──────────────────────
 function deadCodeElimination(instrs) {
   const before = instrs.map(instrToStr);
-  const result = deepClone(instrs);
-  const changes = [];
+  const snapshot = deepClone(instrs);
+  const changes  = [];
 
-  // Collect all used variables
-  const used = new Set();
-  for (const ins of result) {
-    if (ins.arg1 && !isNum(ins.arg1)) used.add(ins.arg1);
-    if (ins.arg2 && !isNum(ins.arg2)) used.add(ins.arg2);
-    if (ins.op === 'return' && ins.arg1) used.add(ins.arg1);
-  }
+  // ── Build CFG + LVA on the current instruction set ──────────
+  const blocks = window.buildCFG(snapshot);
+  window.runLiveVariableAnalysis(blocks);
 
-  // Mark instructions whose result is never used
-  const toRemove = new Set();
-  for (let i = result.length - 1; i >= 0; i--) {
-    const ins = result[i];
-    if ((ins.op === 'assign' || ins.op === 'binop') && ins.result && !used.has(ins.result)) {
-      changes.push({ type:'removed', before: instrToStr(ins), after:'(removed)', note:`${ins.result} never used` });
-      toRemove.add(i);
+  // ── Mark dead instructions block-by-block ────────────────────
+  // An instruction is removable if:
+  //   • it has a result (assign or binop)
+  //   • that result is NOT live at the point just before the instruction
+  //   • it is not a control-flow or effectful instruction
+  const deadSet = new Set(); // indices into snapshot[]
+
+  for (const block of blocks) {
+    // Start with liveness = OUT[B] from dataflow
+    // We use a plain Set (copy) so we can mutate it per-instruction
+    let live = new Set(block.OUT);
+
+    // Traverse instructions in reverse order
+    for (let k = block.instrs.length - 1; k >= 0; k--) {
+      const ins  = block.instrs[k];
+      // Compute original flat index: block.startIdx + k
+      const flatIdx = block.startIdx + k;
+
+      const isEliminable = (ins.op === 'assign' || ins.op === 'binop')
+                        && ins.result
+                        && !live.has(ins.result);
+
+      if (isEliminable) {
+        changes.push({
+          type:   'removed',
+          before: instrToStr(ins),
+          after:  '(removed)',
+          note:   `${ins.result} not live`,
+          reason: 'Variable not live after this point'
+        });
+        deadSet.add(flatIdx);
+      }
+
+      // Update liveness BACKWARDS:
+      //   live = (live − def(ins)) ∪ use(ins)
+      const { use, def } = window.instrUseDef(ins);
+      def.forEach(v => live.delete(v));
+      use.forEach(v => live.add(v));
     }
   }
 
-  const filtered = result.filter((_, i) => !toRemove.has(i));
-  return { name:'Dead Code Elimination', changes, before, after: filtered.map(instrToStr),
+  // ── Filter snapshot, preserving order ───────────────────────
+  const filtered = snapshot.filter((_, i) => !deadSet.has(i));
+
+  return {
+    name: 'Dead Code Elimination',
+    changes,
+    before,
+    after: filtered.map(instrToStr),
     instrs: filtered,
-    description:'Removes assignments whose results are never referenced, reducing instruction count.' };
+    description: 'Removes assignments whose results are not live (LVA-based), ' +
+                 'eliminating truly dead definitions even in branching code.'
+  };
 }
 
 // ── 6. COPY PROPAGATION ───────────────────────────────────────
@@ -187,16 +225,19 @@ function copyPropagation(instrs) {
   const before = instrs.map(instrToStr);
   const result = deepClone(instrs);
   const changes = [];
-  const copyMap = {}; // x → y  means x = y (simple copy)
+  let copyMap = {}; // x → y  means x = y (simple copy)
 
   for (const ins of result) {
+    if (ins.op === 'label') {
+      copyMap = {}; // Block boundary: clear map
+    }
     if (ins.op === 'assign') {
       if (!isNum(ins.arg1) && copyMap[ins.arg1]) {
         const old = instrToStr(ins);
         const newVal = copyMap[ins.arg1];
         ins.arg1 = newVal;
         updateRaw(ins);
-        changes.push({ type:'changed', before: old, after: instrToStr(ins), note:`propagated ${newVal}` });
+        changes.push({ type:'changed', before: old, after: instrToStr(ins), note:`propagated ${newVal}`, reason: 'Replaced variable with its source' });
       }
       if (!isNum(ins.arg1)) copyMap[ins.result] = ins.arg1;
       else delete copyMap[ins.result];
@@ -204,7 +245,7 @@ function copyPropagation(instrs) {
       let changed = false; const old = instrToStr(ins);
       if (copyMap[ins.arg1]) { ins.arg1 = copyMap[ins.arg1]; changed = true; }
       if (copyMap[ins.arg2]) { ins.arg2 = copyMap[ins.arg2]; changed = true; }
-      if (changed) { updateRaw(ins); changes.push({ type:'changed', before: old, after: instrToStr(ins), note:'copy propagated' }); }
+      if (changed) { updateRaw(ins); changes.push({ type:'changed', before: old, after: instrToStr(ins), note:'copy propagated', reason: 'Replaced variable with its source' }); }
       delete copyMap[ins.result];
     } else if (ins.op !== 'label' && ins.op !== 'goto') {
       if (ins.result) delete copyMap[ins.result];
@@ -216,22 +257,42 @@ function copyPropagation(instrs) {
 }
 
 // ── PIPELINE RUNNER ───────────────────────────────────────────
-function runAllPasses(instrs) {
-  const passes = [];
-  let current = deepClone(instrs);
+// Pass composition per level:
+//   O0 — no passes (return original unchanged)
+//   O1 — Constant Folding + Constant Propagation
+//   O2 — O1 + Algebraic Simplification + Copy Propagation
+//   O3 — O2 + Common Subexpression Elimination + Dead Code Elimination
+function runAllPasses(instrs, level) {
+  const passes  = [];
+  let   current = deepClone(instrs);
+  const lv      = level || 'O2';
+
+  // O0: return immediately with no passes applied
+  if (lv === 'O0') {
+    return { passes, optimized: current };
+  }
 
   const run = (fn) => {
     const res = fn(current);
-    current = res.instrs;
+    current   = res.instrs;
     passes.push(res);
   };
 
+  // O1 — always included when level ≥ O1
   run(constantFolding);
   run(constantPropagation);
-  run(algebraicSimplification);
-  run(copyPropagation);
-  run(commonSubexpressionElimination);
-  run(deadCodeElimination);
+
+  // O2 — adds algebraic simplification + copy propagation
+  if (lv === 'O2' || lv === 'O3') {
+    run(algebraicSimplification);
+    run(copyPropagation);
+  }
+
+  // O3 — adds CSE + LVA-based dead code elimination
+  if (lv === 'O3') {
+    run(commonSubexpressionElimination);
+    run(deadCodeElimination);
+  }
 
   return { passes, optimized: current };
 }
@@ -239,3 +300,4 @@ function runAllPasses(instrs) {
 // ── Export ───────────────────────────────────────────────────
 window.runAllPasses = runAllPasses;
 window.instrToStr   = instrToStr;
+
