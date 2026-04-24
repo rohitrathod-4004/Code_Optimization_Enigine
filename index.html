@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compiler Optimization Visualizer</title>
+  <meta name="description" content="An interactive tool that simulates how a compiler optimizes intermediate code through constant folding, propagation, CSE, and dead code elimination." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo-group">
+      <div class="logo-icon">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <rect x="2" y="2" width="10" height="10" rx="2" fill="#6C63FF"/>
+          <rect x="16" y="2" width="10" height="10" rx="2" fill="#00D9FF"/>
+          <rect x="2" y="16" width="10" height="10" rx="2" fill="#00D9FF"/>
+          <rect x="16" y="16" width="10" height="10" rx="2" fill="#A78BFA"/>
+          <line x1="12" y1="7" x2="16" y2="7" stroke="#fff" stroke-width="2"/>
+          <line x1="7" y1="12" x2="7" y2="16" stroke="#fff" stroke-width="2"/>
+          <line x1="21" y1="12" x2="21" y2="16" stroke="#fff" stroke-width="2"/>
+          <line x1="12" y1="21" x2="16" y2="21" stroke="#fff" stroke-width="2"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="site-title">Compiler Optimization Visualizer</h1>
+        <p class="site-subtitle">IR Generation · CFG · Optimization Pipeline · Metrics</p>
+      </div>
+    </div>
+    <div class="header-badges">
+      <span class="badge badge-purple">TAC</span>
+      <span class="badge badge-cyan">CFG</span>
+      <span class="badge badge-green">Optimizer</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<main class="app-layout">
+
+  <!-- ===== LEFT PANEL: INPUT ===== -->
+  <aside class="panel panel-input" id="inputPanel">
+    <div class="panel-header">
+      <span class="panel-icon">📝</span>
+      <h2 class="panel-title">Input</h2>
+      <div class="mode-toggle" id="modeToggle">
+        <button class="mode-btn active" id="modeCBtn" onclick="switchMode('c')">C-like</button>
+        <button class="mode-btn" id="modeTACBtn" onclick="switchMode('tac')">TAC</button>
+      </div>
+    </div>
+
+    <div class="sample-buttons" id="sampleButtons">
+      <span class="sample-label">Load Sample:</span>
+      <button class="btn btn-ghost btn-sm" onclick="loadSample('simple')">Simple</button>
+      <button class="btn btn-ghost btn-sm" onclick="loadSample('branching')">Branching</button>
+      <button class="btn btn-ghost btn-sm" onclick="loadSample('loop')">Loop</button>
+      <button class="btn btn-ghost btn-sm" onclick="loadSample('algo')">Algorithm</button>
+    </div>
+
+    <div class="editor-wrapper">
+      <div class="editor-gutter" id="editorGutter"></div>
+      <textarea
+        id="codeEditor"
+        class="code-editor"
+        spellcheck="false"
+        placeholder="Enter simplified C-like code here..."
+        oninput="updateGutter()"
+        onscroll="syncGutterScroll()"
+      ></textarea>
+    </div>
+
+    <div class="mode-hint" id="modeHint">
+      <strong>Supported syntax:</strong> assignments, arithmetic (+−×÷%), if-goto, labels, function-like structure.
+    </div>
+
+    <div class="input-actions">
+      <button class="btn btn-secondary" onclick="clearEditor()">✕ Clear</button>
+      <div style="flex:1"></div>
+      <label class="toggle-row">
+        <span class="toggle-label">Step-by-Step</span>
+        <div class="toggle-switch" id="stepToggle" onclick="toggleStepMode()">
+          <div class="toggle-knob"></div>
+        </div>
+      </label>
+      <button class="btn btn-primary" id="optimizeBtn" onclick="runOptimizer()">
+        <span id="optimizeBtnText">⚡ Optimize</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===== RIGHT PANEL: RESULTS ===== -->
+  <section class="results-area" id="resultsArea">
+
+    <!-- WELCOME STATE -->
+    <div class="welcome-state" id="welcomeState">
+      <div class="welcome-icon">🔬</div>
+      <h2 class="welcome-title">Ready to Optimize</h2>
+      <p class="welcome-desc">Enter or load sample code in the editor, then click <strong>⚡ Optimize</strong> to see the full optimization pipeline in action.</p>
+      <div class="welcome-steps">
+        <div class="wstep"><span class="wstep-num">1</span><span>Write or load code</span></div>
+        <div class="wstep"><span class="wstep-num">2</span><span>Click Optimize</span></div>
+        <div class="wstep"><span class="wstep-num">3</span><span>Explore each stage</span></div>
+      </div>
+    </div>
+
+    <!-- RESULTS (hidden initially) -->
+    <div class="results-inner" id="resultsInner" style="display:none">
+
+      <!-- TABS -->
+      <div class="tabs-bar" id="tabsBar">
+        <button class="tab active" data-tab="ir" onclick="switchTab('ir')">📋 IR / TAC</button>
+        <button class="tab" data-tab="cfg" onclick="switchTab('cfg')">🔀 CFG</button>
+        <button class="tab" data-tab="pipeline" onclick="switchTab('pipeline')">⚙️ Pipeline</button>
+        <button class="tab" data-tab="output" onclick="switchTab('output')">✅ Output</button>
+        <button class="tab" data-tab="metrics" onclick="switchTab('metrics')">📊 Metrics</button>
+      </div>
+
+      <!-- TAB: IR -->
+      <div class="tab-content active" id="tab-ir">
+        <div class="section-label">Generated Three-Address Code (TAC)</div>
+        <div class="tac-grid" id="tacGrid"></div>
+      </div>
+
+      <!-- TAB: CFG -->
+      <div class="tab-content" id="tab-cfg">
+        <div class="section-label">Control Flow Graph</div>
+        <div class="cfg-container" id="cfgContainer"></div>
+      </div>
+
+      <!-- TAB: PIPELINE -->
+      <div class="tab-content" id="tab-pipeline">
+        <div class="section-label">Optimization Pipeline — Step by Step</div>
+        <div class="pipeline-controls" id="pipelineControls" style="display:none">
+          <button class="btn btn-secondary btn-sm" onclick="stepBack()">◀ Prev</button>
+          <span class="step-indicator" id="stepIndicator">Step 1 / 6</span>
+          <button class="btn btn-primary btn-sm" onclick="stepForward()">Next ▶</button>
+        </div>
+        <div class="pipeline-passes" id="pipelinePasses"></div>
+      </div>
+
+      <!-- TAB: OUTPUT -->
+      <div class="tab-content" id="tab-output">
+        <div class="output-split">
+          <div>
+            <div class="section-label">Optimized TAC</div>
+            <div class="code-block" id="optimizedTAC"></div>
+          </div>
+          <div>
+            <div class="section-label">Reconstructed C-like Code</div>
+            <div class="code-block" id="reconstructedC"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: METRICS -->
+      <div class="tab-content" id="tab-metrics">
+        <div class="section-label">Performance Comparison Dashboard</div>
+        <div class="metrics-grid" id="metricsGrid"></div>
+        <div class="section-label" style="margin-top:2rem">Optimization Details</div>
+        <div class="opt-details" id="optDetails"></div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<!-- Step Mode Overlay -->
+<div class="step-overlay" id="stepOverlay" style="display:none">
+  <div class="step-modal">
+    <div class="step-modal-header">
+      <span class="step-modal-title" id="stepModalTitle">Optimization Step</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeStepMode()">✕ Close</button>
+    </div>
+    <div class="step-modal-body" id="stepModalBody"></div>
+    <div class="step-modal-footer">
+      <button class="btn btn-secondary" onclick="stepModalBack()" id="stepModalBackBtn">◀ Previous</button>
+      <span class="step-modal-counter" id="stepModalCounter">1 / 6</span>
+      <button class="btn btn-primary" onclick="stepModalNext()" id="stepModalNextBtn">Next ▶</button>
+    </div>
+  </div>
+</div>
+
+<script src="samples.js"></script>
+<script src="parser.js"></script>
+<script src="optimizer.js"></script>
+<script src="cfg.js"></script>
+<script src="ui.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
