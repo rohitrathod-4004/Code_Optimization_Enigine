@@ -154,7 +154,7 @@ function computeDominators(blocks) {
   const allBlocks = new Set(blocks);
   let entry = blocks[0];
   for (const b of blocks) {
-    if (b.preds.length === 0) {
+    if (b.predecessors && b.predecessors.length === 0) {
       entry = b;
       break;
     }
@@ -176,13 +176,13 @@ function computeDominators(blocks) {
       if (b === entry) continue;
 
       let intersection = null;
-      for (const p of b.preds) {
+      for (const p of (b.predecessors || [])) {
         if (!intersection) {
           intersection = new Set(p.dominators);
         } else {
           const newIntersect = new Set();
           for (const d of intersection) {
-            if (p.dominators.has(d)) newIntersect.add(d);
+            if (p.dominators && p.dominators.has(d)) newIntersect.add(d);
           }
           intersection = newIntersect;
         }
