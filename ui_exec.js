@@ -16,7 +16,7 @@ function renderFunctionsView(funcTable) {
   names.forEach(name => {
     const fn = funcTable[name];
     const formals = fn.formals || [];
-    const body    = fn.body    || [];
+    const body = fn.body || [];
     const sig = `${name}(${formals.join(', ')})`;
 
     html += `<div class="func-card">
@@ -29,7 +29,7 @@ function renderFunctionsView(funcTable) {
       </div>` : ''}
       <div class="func-body">
         ${body.length ? body.map((ins, i) => `<div class="func-instr-line">
-          <span class="fi-num">${i+1}</span>
+          <span class="fi-num">${i + 1}</span>
           <span class="fi-code">${escHtml(instrToStr(ins))}</span>
         </div>`).join('') : '<div class="fi-empty">empty body</div>'}
       </div>
@@ -54,7 +54,7 @@ function renderCallStack(stackSnap) {
     const isTop = i === 0;
     const envStr = Object.entries(frame.env || {})
       .filter(([k]) => !k.startsWith('_'))
-      .map(([k,v]) => `<span class="cs-var">${escHtml(k)}<span class="cs-eq">=</span>${v !== null ? v : '?'}</span>`)
+      .map(([k, v]) => `<span class="cs-var">${escHtml(k)}<span class="cs-eq">=</span>${v !== null ? v : '?'}</span>`)
       .join('');
     html += `<div class="cs-frame ${isTop ? 'cs-top' : ''}">
       <div class="cs-frame-top-bar">
@@ -71,12 +71,12 @@ function renderCallStack(stackSnap) {
 }
 
 // ── Execution Trace Panel ─────────────────────────────────────
-let _execStep  = 0;
+let _execStep = 0;
 let _execTrace = [];
 
 function initExecTrace(trace) {
   _execTrace = trace;
-  _execStep  = 0;
+  _execStep = 0;
   renderExecAtStep(0);
 }
 
@@ -120,12 +120,12 @@ function renderExecAtStep(stepIdx) {
     </div>`;
 
     if (s.callEvent) {
-      const ps = s.callEvent.formals.map((f,i) => `${f} = ${s.callEvent.env[f]}`).join(', ');
+      const ps = s.callEvent.formals.map((f, i) => `${f} = ${s.callEvent.env[f]}`).join(', ');
       html += `<div class="et-call-banner">
         📞 Calling <strong>${escHtml(s.callEvent.func)}</strong>(${escHtml(ps)})
         <div class="et-param-list">${s.callEvent.params.map(p =>
-          `<span class="et-param"><span class="et-param-name">${escHtml(p.name)}</span><span class="et-param-val">${p.value}</span></span>`
-        ).join('')}</div>
+        `<span class="et-param"><span class="et-param-name">${escHtml(p.name)}</span><span class="et-param-val">${p.value}</span></span>`
+      ).join('')}</div>
       </div>`;
     }
     if (s.returnEvent) {
@@ -148,7 +148,7 @@ function execStepBack() {
   if (_execStep > 0) renderExecAtStep(_execStep - 1);
 }
 function execStepFirst() { renderExecAtStep(0); }
-function execStepLast()  { renderExecAtStep(_execTrace.length - 1); }
+function execStepLast() { renderExecAtStep(_execTrace.length - 1); }
 
 // ── Return value summary ──────────────────────────────────────
 function renderReturnValues(trace) {
@@ -170,12 +170,12 @@ function renderReturnValues(trace) {
   el.innerHTML = html;
 }
 
-window.renderFunctionsView  = renderFunctionsView;
-window.renderCallStack      = renderCallStack;
-window.initExecTrace        = initExecTrace;
-window.renderExecAtStep     = renderExecAtStep;
-window.execStepForward      = execStepForward;
-window.execStepBack         = execStepBack;
-window.execStepFirst        = execStepFirst;
-window.execStepLast         = execStepLast;
-window.renderReturnValues   = renderReturnValues;
+window.renderFunctionsView = renderFunctionsView;
+window.renderCallStack = renderCallStack;
+window.initExecTrace = initExecTrace;
+window.renderExecAtStep = renderExecAtStep;
+window.execStepForward = execStepForward;
+window.execStepBack = execStepBack;
+window.execStepFirst = execStepFirst;
+window.execStepLast = execStepLast;
+window.renderReturnValues = renderReturnValues;

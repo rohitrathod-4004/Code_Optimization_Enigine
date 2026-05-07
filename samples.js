@@ -42,26 +42,16 @@ L_else:
 }`,
 
     // ── 3. For-loop (sum 1..n) ───────────────────────────────
-    loop: `// For-loop: sum of 1 to n  (CSE + DCE demo)
+    loop: `// For-loop: sum of 1 to n (using upgraded while parser)
 int main() {
   int n = 10;
   int i = 1;
   int sum = 0;
-  int step = 1 * 1;
-  int limit = n + 0;
-L_for_cond:
-  if (i > limit) goto L_for_end;
-  int t1 = sum + i;
-  int t2 = sum + i;
-  sum = t1;
-  int next = i + step;
-  int next2 = i + step;
-  i = next;
-  goto L_for_cond;
-L_for_end:
-  int result = sum * 1;
-  int waste = result + 0;
-  return result;
+  while (i <= n) {
+    sum = sum + i;
+    i = i + 1;
+  }
+  return sum;
 }`,
 
     // ── 4. Algorithm (Fibonacci-style) ───────────────────────
@@ -207,3 +197,4 @@ return ans`
   }
 };
 
+window.SAMPLES = SAMPLES;

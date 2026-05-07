@@ -1,10 +1,11 @@
 // ============================================================
-//  UI  — Rendering all visualization panels
+//  UI  — Premium Unified Rendering Hub
 // ============================================================
 
 // ── TAC Renderer ─────────────────────────────────────────────
 function renderTAC(instrs) {
   const grid = document.getElementById('tacGrid');
+  if (!grid) return;
   if (!instrs.length) { grid.innerHTML = '<div class="pass-no-change">No instructions generated.</div>'; return; }
 
   let currentBlock = -1;
@@ -17,39 +18,39 @@ function renderTAC(instrs) {
     const cls = tacClass(ins.op);
     html += `<div class="tac-line">
       <span class="tac-num">${idx + 1}</span>
-      <span class="tac-code ${cls}">${escHtml(instrToStr(ins))}</span>
+      <span class="tac-code ${cls}">${escHtml(window.instrToStr(ins))}</span>
     </div>`;
   });
   grid.innerHTML = html;
 }
 
 function tacClass(op) {
-  if (op === 'label')  return 'tac-label';
-  if (op === 'goto')   return 'tac-goto';
-  if (op === 'if')     return 'tac-if';
-  if (op === 'return') return 'tac-return';
+  if (op === 'label' || op === 'func') return 'tac-label';
+  if (op === 'goto') return 'tac-goto';
+  if (op === 'if') return 'tac-if';
+  if (op === 'return' || op === 'call') return 'tac-return';
   return 'tac-assign';
 }
 
-// ── CFG Renderer — SVG Directed Graph ────────────────────────
+// ── CFG Renderer (Premium SVG Logic) ─────────────────────────
 function renderCFG(blocks) {
   const container = document.getElementById('cfgContainer');
-  if (!blocks.length) { container.innerHTML = '<div class="pass-no-change">No blocks identified.</div>'; return; }
+  if (!container) return;
+  if (!blocks.length) { container.innerHTML = '<div class="pass-no-change">No blocks.</div>'; return; }
 
-  /* ── 1. Detect back-edges via DFS ── */
+  // 1. Detect back-edges and levels
   const backEdgeSet = new Set();
   const dfsVisited = new Set(), dfsStack = new Set();
   function dfs(b) {
     dfsVisited.add(b.id); dfsStack.add(b.id);
     b.successors.forEach(s => {
-      if (dfsStack.has(s.id)) { backEdgeSet.add(`${b.id}→${s.id}`); }
-      else if (!dfsVisited.has(s.id)) { dfs(s); }
+      if (dfsStack.has(s.id)) backEdgeSet.add(`${b.id}→${s.id}`);
+      else if (!dfsVisited.has(s.id)) dfs(s);
     });
     dfsStack.delete(b.id);
   }
   dfs(blocks[0]);
 
-  /* ── 2. BFS level assignment (skip back-edges) ── */
   const levels = {}; levels[blocks[0].id] = 0;
   const queue = [blocks[0]]; const bfsVis = new Set([blocks[0].id]);
   while (queue.length) {
@@ -62,223 +63,152 @@ function renderCFG(blocks) {
   }
   blocks.forEach(b => { if (levels[b.id] === undefined) levels[b.id] = 0; });
 
-  /* ── 3. Group by level and compute positions ── */
-  const NODE_W = 230, LINE_H = 17, HDR_H = 42, PAD = 10;
-  const V_GAP = 90, H_GAP = 60, MARGIN = 80;
-
+  // 2. Layout Constants
+  const NODE_W = 220, LINE_H = 17, HDR_H = 36, PAD = 10, V_GAP = 80, H_GAP = 50;
   const levelGroups = {};
-  blocks.forEach(b => {
-    const lv = levels[b.id];
-    if (!levelGroups[lv]) levelGroups[lv] = [];
-    levelGroups[lv].push(b);
-  });
+  blocks.forEach(b => { const lv = levels[b.id]; if (!levelGroups[lv]) levelGroups[lv] = []; levelGroups[lv].push(b); });
   const numLevels = Math.max(...Object.keys(levelGroups).map(Number)) + 1;
-
-  const nodeH = {};
-  blocks.forEach(b => {
-    const vis = b.instrs.filter(i => i.op !== 'label');
-    nodeH[b.id] = HDR_H + PAD + Math.max(vis.length, 1) * LINE_H + PAD;
-  });
-
-  /* y positions per level (tallest node in level drives spacing) */
-  const levelY = {}, levelMaxH = {};
-  let cy = MARGIN;
-  for (let lv = 0; lv < numLevels; lv++) {
-    levelY[lv] = cy;
-    levelMaxH[lv] = Math.max(...(levelGroups[lv] || []).map(b => nodeH[b.id]));
-    cy += levelMaxH[lv] + V_GAP;
-  }
-  const totalH = cy + MARGIN;
-
-  /* x positions – centre each level */
+  
   const pos = {};
-  const maxPerRow = Math.max(...Object.values(levelGroups).map(g => g.length));
-  const totalW = Math.max(maxPerRow * (NODE_W + H_GAP) - H_GAP + MARGIN * 2, 500);
-  Object.entries(levelGroups).forEach(([lv, grp]) => {
+  let cy = 60;
+  for (let lv = 0; lv < numLevels; lv++) {
+    const grp = levelGroups[lv] || [];
     const rowW = grp.length * NODE_W + (grp.length - 1) * H_GAP;
-    const sx = (totalW - rowW) / 2;
+    const sx = (900 - rowW) / 2;
+    let maxH = 0;
     grp.forEach((b, i) => {
-      pos[b.id] = { x: sx + i * (NODE_W + H_GAP), y: levelY[+lv], w: NODE_W, h: nodeH[b.id] };
+      const h = HDR_H + PAD + Math.max(b.instrs.length, 1) * LINE_H + PAD;
+      pos[b.id] = { x: sx + i * (NODE_W + H_GAP), y: cy, w: NODE_W, h: h };
+      if (h > maxH) maxH = h;
     });
-  });
-
-  /* ── 4. Edge-label mapping (True / False for if-blocks) ── */
-  const edgeLbl = {};
-  blocks.forEach(b => {
-    const last = b.instrs[b.instrs.length - 1];
-    if (last && last.op === 'if' && b.successors.length === 2) {
-      edgeLbl[`${b.id}→${b.successors[0].id}`] = 'T';
-      edgeLbl[`${b.id}→${b.successors[1].id}`] = 'F';
-    }
-  });
-
-  /* ── 5. Build SVG ── */
-  const blockType = b =>
-    b.id === 0 ? 'entry' :
-    b.instrs.some(i => i.op === 'return') ? 'exit' : 'basic';
-
-  const typeColor = { entry:'#22d3a5', basic:'#6C63FF', exit:'#ff5672' };
-  const typeBg    = { entry:'rgba(34,211,165,.13)', basic:'rgba(108,99,255,.12)', exit:'rgba(255,86,114,.12)' };
-
-  /* SVG path for an edge */
-  function edgePath(from, to, isBack, isTrueBranch) {
-    const fp = pos[from.id], tp = pos[to.id];
-    if (!fp || !tp) return '';
-    const key = `${from.id}→${to.id}`;
-    const lbl = edgeLbl[key] || '';
-
-    if (isBack) {
-      /* Back edge: exit left side of source, curve up to left side of target */
-      const sx = fp.x, sy = fp.y + fp.h / 2;
-      const tx = tp.x, ty = tp.y + tp.h / 2;
-      const cx = Math.min(sx, tx) - 55;
-      return `<path class="cfg-edge-path cfg-edge-back" id="e${from.id}-${to.id}"
-        d="M ${sx} ${sy} C ${cx} ${sy} ${cx} ${ty} ${tx} ${ty}"
-        marker-end="url(#arrowBack)" />
-        ${lbl ? edgeLabel(cx - 5, (sy + ty) / 2, lbl, true) : ''}
-        ${backEdgeLoop(cx, (sy + ty) / 2)}`;
-    } else {
-      /* Forward edge: bottom-center to top-center with cubic bezier */
-      const sx = fp.x + fp.w / 2, sy = fp.y + fp.h;
-      const tx = tp.x + tp.w / 2, ty = tp.y;
-      const my = (sy + ty) / 2;
-      const color = lbl === 'T' ? '#22d3a5' : lbl === 'F' ? '#ff5672' : '#6C63FF';
-      const cls   = lbl === 'T' ? 'cfg-edge-true' : lbl === 'F' ? 'cfg-edge-false' : 'cfg-edge-fwd';
-      const markId = lbl === 'T' ? 'arrowTrue' : lbl === 'F' ? 'arrowFalse' : 'arrowFwd';
-      return `<path class="cfg-edge-path ${cls}" id="e${from.id}-${to.id}"
-        d="M ${sx} ${sy} C ${sx} ${my} ${tx} ${my} ${tx} ${ty}"
-        marker-end="url(#${markId})" />
-        ${lbl ? edgeLabel((sx + tx) / 2 + (lbl === 'T' ? -18 : 18), my, lbl, false) : ''}`;
-    }
+    cy += maxH + V_GAP;
   }
 
-  function edgeLabel(x, y, txt, isBack) {
-    const fill = txt === 'T' ? '#22d3a5' : txt === 'F' ? '#ff5672' : '#A78BFA';
-    return `<rect x="${x-10}" y="${y-9}" width="20" height="14" rx="3" fill="${fill}" fill-opacity=".9"/>
-    <text x="${x}" y="${y+2}" text-anchor="middle" class="cfg-edge-lbl">${txt}</text>`;
-  }
-
-  function backEdgeLoop(cx, my) {
-    return `<text x="${cx - 2}" y="${my + 4}" text-anchor="middle" class="cfg-back-icon">↺</text>`;
-  }
-
-  /* Node rectangle */
-  function nodeRect(b) {
-    const p = pos[b.id]; if (!p) return '';
-    const type = blockType(b);
-    const col  = typeColor[type];
-    const bg   = typeBg[type];
-    const vis  = b.instrs.filter(i => i.op !== 'label');
-
-    let inner = '';
-    /* header */
-    inner += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${HDR_H}"
-      rx="8" ry="8" fill="${col}" fill-opacity=".18" />`;
-    inner += `<rect x="${p.x}" y="${p.y + HDR_H - 4}" width="${p.w}" height="4" fill="${col}" fill-opacity=".18"/>`;
-    /* body bg */
-    inner += `<rect x="${p.x}" y="${p.y + HDR_H}" width="${p.w}" height="${p.h - HDR_H}"
-      fill="${bg}" />`;
-    /* outer border */
-    inner += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}"
-      rx="8" fill="none" stroke="${col}" stroke-width="1.5"
-      class="cfg-node-border" data-bid="${b.id}" />`;
-    /* block name */
-    inner += `<text x="${p.x + 12}" y="${p.y + 18}" class="cfg-node-name" fill="${col}">${escHtml(b.name)}</text>`;
-    /* type badge */
-    const badgeTxt = type.charAt(0).toUpperCase() + type.slice(1);
-    inner += `<rect x="${p.x + p.w - 52}" y="${p.y + 9}" width="44" height="16" rx="4"
-      fill="${col}" fill-opacity=".25"/>`;
-    inner += `<text x="${p.x + p.w - 30}" y="${p.y + 20}" class="cfg-node-badge" fill="${col}">${badgeTxt}</text>`;
-    /* separator */
-    inner += `<line x1="${p.x + 1}" y1="${p.y + HDR_H}" x2="${p.x + p.w - 1}" y2="${p.y + HDR_H}"
-      stroke="${col}" stroke-opacity=".3" stroke-width="1"/>`;
-    /* instructions */
-    vis.forEach((ins, li) => {
-      const iy = p.y + HDR_H + PAD + li * LINE_H + LINE_H * 0.72;
-      const str = escHtml(instrToStr(ins));
-      inner += `<text x="${p.x + 10}" y="${iy}" class="cfg-node-instr">${str}</text>`;
-    });
-
-    return `<g class="cfg-node" data-bid="${b.id}"
-      onmouseenter="cfgHighlight(${b.id}, true)"
-      onmouseleave="cfgHighlight(${b.id}, false)">${inner}</g>`;
-  }
-
-  /* Assemble SVG */
-  let edgesHtml = '', nodesHtml = '';
+  // 3. Build SVG
+  let svg = `<svg width="900" height="${cy + 60}" viewBox="0 0 900 ${cy + 60}">
+    <defs>
+      <marker id="arrowFwd"  markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#6C63FF"/></marker>
+      <marker id="arrowTrue" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#22d3a5"/></marker>
+      <marker id="arrowFalse" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ff5672"/></marker>
+      <marker id="arrowBack"  markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#A78BFA"/></marker>
+    </defs>`;
+  
+  // Edges
   blocks.forEach(from => {
     from.successors.forEach(to => {
       const isBack = backEdgeSet.has(`${from.id}→${to.id}`);
-      edgesHtml += edgePath(from, to, isBack);
+      const fp = pos[from.id], tp = pos[to.id];
+      if (!fp || !tp) return;
+
+      const last = from.instrs[from.instrs.length-1];
+      const isBranch = last && last.op === 'if' && from.successors.length === 2;
+      const isTrue = isBranch && to === from.successors[0];
+      const isFalse = isBranch && to === from.successors[1];
+
+      const color = isTrue ? '#22d3a5' : isFalse ? '#ff5672' : isBack ? '#A78BFA' : '#6C63FF';
+      const marker = isTrue ? 'arrowTrue' : isFalse ? 'arrowFalse' : isBack ? 'arrowBack' : 'arrowFwd';
+      const dash = isBack ? '5,3' : 'none';
+
+      const sx = fp.x + fp.w/2, sy = fp.y + fp.h;
+      const tx = tp.x + tp.w/2, ty = tp.y;
+      
+      if (isBack) {
+        const cx = Math.min(fp.x, tp.x) - 40;
+        svg += `<path d="M ${fp.x} ${fp.y + fp.h/2} C ${cx} ${fp.y + fp.h/2} ${cx} ${tp.y + tp.h/2} ${tp.x} ${tp.y + tp.h/2}" 
+                 stroke="${color}" stroke-dasharray="${dash}" fill="none" stroke-width="1.8" marker-end="url(#${marker})"/>`;
+      } else {
+        svg += `<path d="M ${sx} ${sy} C ${sx} ${sy + 35} ${tx} ${ty - 35} ${tx} ${ty}" 
+                 stroke="${color}" fill="none" stroke-width="1.8" marker-end="url(#${marker})"/>`;
+      }
     });
   });
-  blocks.forEach(b => { nodesHtml += nodeRect(b); });
 
-  const svg = `
-  <div class="cfg-legend">
-    <span class="cfg-leg-item"><span class="cfg-leg-dot" style="background:#22d3a5"></span>Entry</span>
-    <span class="cfg-leg-item"><span class="cfg-leg-dot" style="background:#6C63FF"></span>Basic</span>
-    <span class="cfg-leg-item"><span class="cfg-leg-dot" style="background:#ff5672"></span>Exit</span>
-    <span class="cfg-leg-item"><span class="cfg-leg-line" style="background:#22d3a5"></span>True branch</span>
-    <span class="cfg-leg-item"><span class="cfg-leg-line" style="background:#ff5672"></span>False branch</span>
-    <span class="cfg-leg-item"><span class="cfg-leg-line" style="background:#A78BFA;border-style:dashed"></span>Back edge ↺</span>
-  </div>
-  <div class="cfg-svg-wrap">
-  <svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}"
-       viewBox="0 0 ${totalW} ${totalH}" id="cfgSvg">
-    <defs>
-      <marker id="arrowFwd"  markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="#6C63FF"/></marker>
-      <marker id="arrowTrue" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="#22d3a5"/></marker>
-      <marker id="arrowFalse" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="#ff5672"/></marker>
-      <marker id="arrowBack"  markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="#A78BFA"/></marker>
-    </defs>
-    <g id="cfgEdges">${edgesHtml}</g>
-    <g id="cfgNodes">${nodesHtml}</g>
-  </svg>
-  </div>`;
+  // Nodes
+  blocks.forEach(b => {
+    const p = pos[b.id];
+    const isEntry = b.id === 0;
+    const isExit = b.instrs.some(i => i.op === 'return');
+    const color = isEntry ? '#22d3a5' : isExit ? '#ff5672' : '#6C63FF';
+    
+    // Header
+    svg += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${HDR_H}" rx="8" fill="${color}" fill-opacity="0.15"/>`;
+    svg += `<text x="${p.x+12}" y="${p.y+23}" fill="${color}" font-family="var(--font-mono)" font-size="13" font-weight="700">${escHtml(b.name)}</text>`;
+    // Body
+    svg += `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="8" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.4"/>`;
+    b.instrs.forEach((ins, i) => {
+      svg += `<text x="${p.x+12}" y="${p.y+HDR_H+PAD+i*LINE_H+12}" fill="var(--text-secondary)" font-family="var(--font-mono)" font-size="11">${escHtml(window.instrToStr(ins))}</text>`;
+    });
+  });
 
-  container.innerHTML = svg;
+  svg += `</svg>`;
+  container.innerHTML = `<div class="cfg-svg-wrap">${svg}</div>`;
 }
 
-/* Hover: highlight edges touching a node */
-function cfgHighlight(bid, on) {
-  document.querySelectorAll(`[id^="e${bid}-"], [id$="-${bid}"]`).forEach(el => {
-    el.style.strokeWidth = on ? '2.5' : '';
-    el.style.filter = on ? 'drop-shadow(0 0 4px currentColor)' : '';
-  });
-  const border = document.querySelector(`.cfg-node-border[data-bid="${bid}"]`);
-  if (border) border.style.strokeWidth = on ? '2.5' : '1.5';
+// ── Metrics Renderer (Premium Dashboard) ─────────────────────
+function renderMetrics(original, passes, optimized) {
+  const grid = document.getElementById('metricsGrid');
+  if (!grid) return;
+
+  const mBefore = window.computeMetrics(original);
+  const mAfter  = window.computeMetrics(optimized);
+  const diff    = window.compareMetrics(original, optimized);
+
+  grid.innerHTML = `
+    ${metricCard('📊','Instructions', mBefore.instructionCount, mAfter.instructionCount, '--purple', diff.improvement.instructionReductionPercent)}
+    ${metricCard('⚡','Est. Cost', mBefore.estimatedCost, mAfter.estimatedCost, '--orange', diff.improvement.costReductionPercent)}
+    ${metricCard('🧠','Memory Usage', mBefore.memoryUsage, mAfter.memoryUsage, '--cyan', diff.improvement.memoryReductionPercent)}
+    ${metricCard('🔧','Passes Applied', passes.length, passes.filter(p=>p.changes.length>0).length, '--green', '')}
+  `;
+
+  // Detailed breakdown
+  const details = document.getElementById('optDetails');
+  if (details) {
+    let html = `<div class="section-label">Optimization Timeline</div>`;
+    passes.forEach(p => {
+      if (p.changes.length === 0) return;
+      html += `<div class="opt-detail-row">
+        <span class="opt-detail-icon">⚙️</span>
+        <div class="opt-detail-text">
+          <strong>${p.name}</strong> applied ${p.changes.length} transformations.
+        </div>
+      </div>`;
+    });
+    details.innerHTML = html;
+  }
+}
+
+function metricCard(icon, label, before, after, colorVar, improve) {
+  const isBetter = improve > 0;
+  return `
+    <div class="metric-card" style="--metric-color:var(${colorVar})">
+      <span class="metric-icon">${icon}</span>
+      <span class="metric-label">${label}</span>
+      <div class="metric-compare">
+        <span class="m-val-old">${before}</span>
+        <span class="m-arrow">→</span>
+        <span class="m-val-new">${after}</span>
+      </div>
+      ${improve !== '' ? `<span class="metric-pct ${isBetter?'text-green':'text-muted'}">${isBetter?'+':''}${improve}% better</span>` : ''}
+    </div>
+  `;
 }
 
 // ── Pipeline Renderer ─────────────────────────────────────────
-function renderPipeline(passes, stepMode) {
+function renderPipeline(passes) {
   const container = document.getElementById('pipelinePasses');
-  const controls   = document.getElementById('pipelineControls');
-
-  controls.style.display = stepMode ? 'flex' : 'none';
-
+  if (!container) return;
   let html = '';
   passes.forEach((pass, pi) => {
     const hasChanges = pass.changes.length > 0;
-    const badgeCls   = hasChanges ? 'pass-badge-applied' : 'pass-badge-skip';
-    const badgeTxt   = hasChanges ? `${pass.changes.length} change${pass.changes.length > 1 ? 's' : ''}` : 'No change';
-    const cardCls    = hasChanges ? 'has-changes' : 'no-changes';
-
+    const badgeCls = hasChanges ? 'pass-badge-applied' : 'pass-badge-skip';
+    const badgeTxt = hasChanges ? `${pass.changes.length} changes` : 'No change';
+    
     let diffHtml = '';
     if (hasChanges) {
-      diffHtml = `<table class="diff-table">
-        <thead><tr><th>Before</th><th>After</th><th>Note</th></tr></thead><tbody>`;
+      diffHtml = `<table class="diff-table"><thead><tr><th>Before</th><th>After</th><th>Note</th></tr></thead><tbody>`;
       pass.changes.forEach(c => {
-        const rowCls = c.type === 'removed' ? 'diff-row-removed' : 'diff-row-changed';
-        const beforeTxt = c.type === 'removed' ? `<span class="diff-strike">${escHtml(c.before)}</span>` : escHtml(c.before);
-        diffHtml += `<tr class="${rowCls}">
-          <td>${beforeTxt}</td>
-          <td>${escHtml(c.after)}</td>
-          <td>${escHtml(c.note || '')}</td>
+        diffHtml += `<tr class="${c.type==='removed'?'diff-row-removed':'diff-row-changed'}">
+          <td>${escHtml(c.before)}</td><td>${escHtml(c.after)}</td><td>${escHtml(c.note)}</td>
         </tr>`;
       });
       diffHtml += '</tbody></table>';
@@ -286,269 +216,238 @@ function renderPipeline(passes, stepMode) {
       diffHtml = `<div class="pass-no-change">✓ No optimizations applied in this pass.</div>`;
     }
 
-    html += `<div class="pass-card ${cardCls}" id="pass-card-${pi}">
+    html += `<div class="pass-card ${hasChanges?'has-changes':''}">
       <div class="pass-header" onclick="togglePass(${pi})">
-        <span class="pass-name">
-          ${passIcon(pass.name)} ${escHtml(pass.name)}
-          <span class="pass-badge ${badgeCls}">${badgeTxt}</span>
-        </span>
+        <span class="pass-name">⚙️ ${pass.name} <span class="pass-badge ${badgeCls}">${badgeTxt}</span></span>
         <span class="pass-toggle" id="pass-toggle-${pi}">▶</span>
       </div>
-      <div class="pass-body ${pi === 0 ? 'open' : ''}" id="pass-body-${pi}">
+      <div class="pass-body ${pi===0?'open' : ''}" id="pass-body-${pi}">
         <div class="pass-description">${pass.description}</div>
         ${diffHtml}
       </div>
     </div>`;
   });
-
   container.innerHTML = html;
-  if (passes[0]) {
-    const tog = document.getElementById('pass-toggle-0');
-    if (tog) tog.classList.add('open');
-  }
 }
 
 function togglePass(pi) {
   const body = document.getElementById(`pass-body-${pi}`);
-  const tog  = document.getElementById(`pass-toggle-${pi}`);
-  const open = body.classList.toggle('open');
-  tog.classList.toggle('open', open);
+  const tog = document.getElementById(`pass-toggle-${pi}`);
+  if (body) body.classList.toggle('open');
+  if (tog) tog.classList.toggle('open');
 }
 
-function passIcon(name) {
-  const icons = {
-    'Constant Folding':'🔢', 'Constant Propagation':'🔄',
-    'Algebraic Simplification':'✏️', 'Copy Propagation':'📋',
-    'Common Subexpression Elimination':'♻️', 'Dead Code Elimination':'🗑️'
-  };
-  return icons[name] || '⚙️';
+// ── Execution Tab (Premium Simulation) ────────────────────────
+let _execTrace = [], _execStep = 0, _execInterval = null;
+
+function initExecution(trace) {
+  _execTrace = trace;
+  _execStep = 0;
+  stopAutoPlay();
+  renderExecAtStep(0);
 }
 
-// ── Output Renderer ───────────────────────────────────────────
-function renderOutput(optimizedInstrs) {
-  // TAC block
-  const tacDiv = document.getElementById('optimizedTAC');
-  tacDiv.innerHTML = optimizedInstrs.map((ins, i) =>
-    `<span style="color:var(--text-muted);user-select:none">${String(i+1).padStart(2,' ')}  </span>${colorizeInstr(instrToStr(ins))}\n`
-  ).join('');
+function renderExecAtStep(stepIdx) {
+  const container = document.getElementById('executionView');
+  if (!container || !_execTrace.length) return;
+  _execStep = stepIdx;
+  const step = _execTrace[_execStep];
 
-  // Reconstructed C-like
-  const cDiv = document.getElementById('reconstructedC');
-  cDiv.innerHTML = reconstructC(optimizedInstrs);
-}
+  // 1. Highlight in TAC View (if visible)
+  const tacLines = document.querySelectorAll('#tacGrid .tac-line');
+  tacLines.forEach((line, idx) => {
+    line.classList.toggle('active-exec', idx === step.pc);
+    if (idx === step.pc) line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
 
-function colorizeInstr(str) {
-  // Simple token coloring
-  str = escHtml(str);
-  str = str.replace(/\b(goto|if|return)\b/g, '<span class="cl-keyword">$1</span>');
-  str = str.replace(/\b(\d+)\b/g, '<span class="cl-number">$1</span>');
-  str = str.replace(/([+\-*\/%=<>!]+)/g, '<span class="cl-operator">$1</span>');
-  return str;
-}
+  // 2. Render Simulation UI
+  let html = `
+    <div class="exec-layout">
+      <div class="exec-main">
+        <div class="exec-controls">
+          <button class="btn btn-secondary btn-sm" onclick="execStepBack()" ${_execStep===0?'disabled':''}>◀</button>
+          <button class="btn btn-primary btn-sm" id="playBtn" onclick="toggleAutoPlay()">${_execInterval?'⏸ Pause':'▶ Play'}</button>
+          <button class="btn btn-secondary btn-sm" onclick="execStepForward()" ${_execStep===_execTrace.length-1?'disabled':''}>▶</button>
+          <div style="flex:1"></div>
+          <span class="exec-status">Step ${(_execStep+1).toString().padStart(3,'0')} / ${_execTrace.length}</span>
+        </div>
+        
+        <div class="exec-visual-pc">
+          <div class="pc-marker">PC: ${step.pc}</div>
+          <div class="pc-instr">${escHtml(step.instr)}</div>
+          <div class="pc-note">${escHtml(step.note)}</div>
+        </div>
 
-function reconstructC(instrs) {
-  let lines = [];
-  lines.push('<span class="cl-keyword">int</span> main() {');
-  const declared = new Set();
-  for (const ins of instrs) {
-    if (ins.op === 'binop' || ins.op === 'assign') {
-      const decl = !declared.has(ins.result);
-      if (decl) declared.add(ins.result);
-      const prefix = decl ? '  <span class="cl-keyword">int</span> ' : '  ';
-      lines.push(`${prefix}<span class="cl-var">${escHtml(ins.result)}</span> <span class="cl-operator">=</span> ${escHtml(instrToStr(ins).split('=').slice(1).join('=').trim())};`);
-    } else if (ins.op === 'label') {
-      lines.push(`<span class="cl-label">${escHtml(ins.label)}:</span>`);
-    } else if (ins.op === 'goto') {
-      lines.push(`  <span class="cl-keyword">goto</span> <span class="cl-label">${escHtml(ins.label)}</span>;`);
-    } else if (ins.op === 'if') {
-      lines.push(`  <span class="cl-keyword">if</span> (${escHtml(ins.arg1)} ${escHtml(ins.cond)} ${escHtml(ins.arg2)}) <span class="cl-keyword">goto</span> <span class="cl-label">${escHtml(ins.label)}</span>;`);
-    } else if (ins.op === 'return') {
-      lines.push(`  <span class="cl-keyword">return</span>${ins.arg1 ? ' <span class="cl-var">' + escHtml(ins.arg1) + '</span>' : ''};`);
-    }
-  }
-  lines.push('}');
-  return lines.join('\n');
-}
-
-// ── Metrics Renderer ──────────────────────────────────────────
-function renderMetrics(original, passes, optimized) {
-  const origCount = original.filter(i => i.op !== 'label').length;
-  const optCount  = optimized.filter(i => i.op !== 'label').length;
-  const removed   = origCount - optCount;
-  const pct       = origCount > 0 ? Math.round((removed / origCount) * 100) : 0;
-  const totalChanges = passes.reduce((s, p) => s + p.changes.length, 0);
-  const passesApplied = passes.filter(p => p.changes.length > 0).length;
-
-  const grid = document.getElementById('metricsGrid');
-  grid.innerHTML = `
-    ${metricCard('📊','Instructions (Before)', origCount, '', '--purple')}
-    ${metricCard('✅','Instructions (After)',  optCount,  '', '--green')}
-    ${metricCard('🗑️','Instructions Removed',  removed,   '', '--cyan')}
-    ${metricCard('📉','Reduction',  pct + '%', '', '--yellow', pct > 0 ? 'text-green' : '')}
-    ${metricCard('⚡','Optimizations Applied', totalChanges, '', '--orange')}
-    ${metricCard('🔧','Passes With Changes',   passesApplied + ' / ' + passes.length, '', '--purple-light')}
-  `;
-
-  // Details
-  const details = document.getElementById('optDetails');
-  let dhtml = '';
-  for (const pass of passes) {
-    if (!pass.changes.length) continue;
-    dhtml += `<div class="opt-detail-row">
-      <span class="opt-detail-icon">${passIcon(pass.name)}</span>
-      <div class="opt-detail-text">
-        <strong>${escHtml(pass.name)}</strong>: ${pass.changes.length} transformation${pass.changes.length > 1 ? 's' : ''} —
-        ${pass.changes.map(c => `<span class="mono" style="font-size:.75rem;color:var(--cyan)">${escHtml(c.before)}</span> → <span class="mono" style="font-size:.75rem;color:var(--green)">${escHtml(c.after)}</span>`).join('; ')}
-      </div>
+        <div class="exec-trace-list">`;
+  
+  const start = Math.max(0, _execStep - 4);
+  for (let i = start; i <= _execStep; i++) {
+    const s = _execTrace[i];
+    html += `<div class="exec-trace-row ${i===_execStep?'current':''}">
+      <span class="etr-icon">${s.callEvent?'📞':s.returnEvent?'↩':'▸'}</span>
+      <span class="etr-func">${s.funcName}</span>
+      <span class="etr-code">${escHtml(s.instr)}</span>
+      <span class="etr-note">${i===_execStep? 'Current' : 'Done'}</span>
     </div>`;
   }
-  if (!dhtml) dhtml = `<div class="opt-detail-row"><span class="opt-detail-icon">ℹ️</span><div class="opt-detail-text">No optimizations were applicable to this code.</div></div>`;
-  details.innerHTML = dhtml;
-}
 
-function metricCard(icon, label, value, sub, colorVar, valClass) {
-  return `<div class="metric-card" style="--metric-color:var(${colorVar})">
-    <span class="metric-icon">${icon}</span>
-    <span class="metric-label">${escHtml(label)}</span>
-    <span class="metric-value ${valClass || ''}">${value}</span>
-    ${sub ? `<span class="metric-sub">${sub}</span>` : ''}
-  </div>`;
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-function escHtml(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// ── Data Flow Tab ─────────────────────────────────────────────
-function renderDataFlow(instrs, instrLiveIn, instrLiveOut) {
-  const el = document.getElementById('dfTable');
-  if (!el) return;
-  if (!instrs.length) { el.innerHTML = '<div class="pass-no-change">No instructions.</div>'; return; }
-
-  let html = `<table class="df-table">
-    <thead><tr><th>#</th><th>Instruction</th><th>Live-In</th><th>Live-Out</th><th>Status</th></tr></thead><tbody>`;
-  instrs.forEach((ins, i) => {
-    const lIn  = instrLiveIn[i]  ? [...instrLiveIn[i]].join(', ')  || '∅' : '∅';
-    const lOut = instrLiveOut[i] ? [...instrLiveOut[i]].join(', ') || '∅' : '∅';
-    const isDef = ins.result && (ins.op === 'binop' || ins.op === 'assign');
-    const isDead = isDef && instrLiveOut[i] && !instrLiveOut[i].has(ins.result);
-    const statusTxt = isDead ? '⚠ Dead def' : isDef ? '✓ Live' : '—';
-    const rowCls = isDead ? 'df-row-dead' : isDef ? 'df-row-live' : '';
-    html += `<tr class="${rowCls}">
-      <td class="df-num">${i + 1}</td>
-      <td class="df-instr">${escHtml(instrToStr(ins))}</td>
-      <td class="df-set">${escHtml(lIn)}</td>
-      <td class="df-set">${escHtml(lOut)}</td>
-      <td class="df-status">${statusTxt}</td>
-    </tr>`;
-  });
-  html += '</tbody></table>';
-  el.innerHTML = html;
-}
-
-// ── Insights Panel ────────────────────────────────────────────
-function renderInsights(varStats, instrLiveOut) {
-  const el = document.getElementById('insightTable');
-  if (!el) return;
-  const keys = Object.keys(varStats);
-  if (!keys.length) { el.innerHTML = '<div class="pass-no-change">No variables found.</div>'; return; }
-
-  let html = `<table class="df-table">
-    <thead><tr><th>Variable</th><th>Uses</th><th>Defs</th><th>Constant?</th><th>Status</th></tr></thead><tbody>`;
-  for (const v of keys) {
-    const s = varStats[v];
-    const isConst = s.constVal !== null;
-    const isDead  = s.uses === 0;
-    const statusTxt = isDead ? '<span class="df-tag-dead">Unused ✕</span>'
-                    : isConst ? `<span class="df-tag-const">Const = ${escHtml(s.constVal)}</span>`
-                    : '<span class="df-tag-live">Live ✓</span>';
-    const rowCls = isDead ? 'df-row-dead' : isConst ? 'df-row-const' : '';
-    html += `<tr class="${rowCls}">
-      <td class="df-instr">${escHtml(v)}</td>
-      <td class="df-num">${s.uses}</td>
-      <td class="df-num">${s.defs}</td>
-      <td class="df-num">${isConst ? s.constVal : '—'}</td>
-      <td>${statusTxt}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  el.innerHTML = html;
-}
-
-// ── Report Tab ────────────────────────────────────────────────
-function renderReport(original, passes, optimized, cfgBefore, cfgAfter, oLevel) {
-  const el = document.getElementById('reportContent');
-  if (!el) return;
-
-  const origCount = original.filter(i => i.op !== 'label').length;
-  const optCount  = optimized.filter(i => i.op !== 'label').length;
-  const removed   = origCount - optCount;
-  const pct       = origCount > 0 ? Math.round((removed / origCount) * 100) : 0;
-
-  const levelNames = { 0:'O0 — No optimization', 1:'O1 — Basic passes', 2:'O2 — Full pipeline + LICM' };
-
-  let html = `<div class="report-header">
-    <div class="report-title">📋 Optimization Report</div>
-    <div class="report-level">Level: <strong>${levelNames[oLevel] || 'O2'}</strong></div>
-  </div>`;
-
-  // Per-pass summary
-  html += `<div class="report-section-title">Pass Results</div><div class="report-rows">`;
-  if (!passes.length) {
-    html += `<div class="report-row"><span class="rr-icon">⏭</span><span class="rr-name">No passes applied (O0)</span><span class="rr-val">—</span></div>`;
-  } else {
-    passes.forEach(p => {
-      const cnt = p.changes.length;
-      const icon = cnt > 0 ? '✔' : '—';
-      const cls  = cnt > 0 ? 'rr-applied' : 'rr-skipped';
-      html += `<div class="report-row ${cls}">
-        <span class="rr-icon">${icon}</span>
-        <span class="rr-name">${passIcon(p.name)} ${escHtml(p.name)}</span>
-        <span class="rr-val">${cnt > 0 ? cnt + ' change' + (cnt > 1 ? 's' : '') : 'no change'}</span>
+  html += `</div></div>
+      <div class="exec-side">
+        <div class="section-label">State & Stack</div>
+        <div class="env-view">
+          ${Object.entries(step.env).length ? Object.entries(step.env).map(([k,v])=>`
+            <div class="env-row">
+              <span class="env-key">${k}</span>
+              <span class="env-val">${v}</span>
+            </div>
+          `).join('') : '<div class="pass-no-change">Empty environment</div>'}
+        </div>
+        <div class="section-label" style="margin-top:1.5rem">Call Stack</div>
+        <div class="stack-view">`;
+  
+  if (step.stackSnap) {
+    [...step.stackSnap].reverse().forEach((frame, i) => {
+      html += `<div class="stack-frame ${i===0?'active':''}">
+        <div class="sf-hdr">${frame.name}</div>
+        <div class="sf-vars">${Object.keys(frame.env).length ? Object.entries(frame.env).map(([k,v])=>`<span class="stack-var">${k}=${v}</span>`).join('') : '—'}</div>
       </div>`;
     });
   }
-  html += '</div>';
-
-  // CFG comparison
-  html += `<div class="report-section-title">CFG Comparison</div><div class="report-cfg-row">
-    <div class="report-cfg-box"><span class="rcb-label">Before</span><span class="rcb-val">${cfgBefore} blocks</span></div>
-    <span class="rcb-arrow">→</span>
-    <div class="report-cfg-box rcb-after"><span class="rcb-label">After</span><span class="rcb-val">${cfgAfter} blocks</span></div>
-  </div>`;
-
-  // Summary stats
-  html += `<div class="report-section-title">Summary</div><div class="report-summary-grid">
-    <div class="rs-card"><span class="rs-label">Instructions Before</span><span class="rs-val">${origCount}</span></div>
-    <div class="rs-card"><span class="rs-label">Instructions After</span><span class="rs-val text-green">${optCount}</span></div>
-    <div class="rs-card"><span class="rs-label">Removed</span><span class="rs-val text-red">${removed}</span></div>
-    <div class="rs-card"><span class="rs-label">Total Reduction</span><span class="rs-val text-cyan">${pct}%</span></div>
-  </div>`;
-
-  el.innerHTML = html;
+  html += `</div></div></div>`;
+  container.innerHTML = html;
 }
 
-// ── Tab Switching ─────────────────────────────────────────────
+function execStepForward() {
+  if(_execStep < _execTrace.length-1) renderExecAtStep(_execStep+1);
+  else stopAutoPlay();
+}
+function execStepBack() { if(_execStep > 0) renderExecAtStep(_execStep-1); }
+
+function toggleAutoPlay() {
+  if (_execInterval) stopAutoPlay();
+  else {
+    _execInterval = setInterval(execStepForward, 400);
+    renderExecAtStep(_execStep); // refresh button state
+  }
+}
+function stopAutoPlay() {
+  if (_execInterval) { clearInterval(_execInterval); _execInterval = null; }
+  const btn = document.getElementById('playBtn');
+  if (btn) btn.innerHTML = '▶ Play';
+}
+
+window.toggleAutoPlay = toggleAutoPlay;
+
+// ── Helpers ───────────────────────────────────────────────────
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function switchTab(id) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${id}`));
 }
 
-// ── Expose ───────────────────────────────────────────────────
-window.renderTAC       = renderTAC;
-window.renderCFG       = renderCFG;
-window.renderPipeline  = renderPipeline;
-window.renderOutput    = renderOutput;
-window.renderMetrics   = renderMetrics;
-window.renderDataFlow  = renderDataFlow;
-window.renderInsights  = renderInsights;
-window.renderReport    = renderReport;
-window.switchTab       = switchTab;
-window.togglePass      = togglePass;
-window.escHtml         = escHtml;
-window.cfgHighlight    = cfgHighlight;
+window.renderTAC = renderTAC;
+window.renderCFG = renderCFG;
+window.renderPipeline = renderPipeline;
+// ── Data Flow Tab (Premium) ───────────────────────────────────
+function renderDataFlow(instrs, instrLiveIn, instrLiveOut) {
+  const el = document.getElementById('dfTable');
+  if (!el) return;
+  let html = `<table class="df-table"><thead><tr><th>#</th><th>Instruction</th><th>Live-In</th><th>Live-Out</th></tr></thead><tbody>`;
+  instrs.forEach((ins, i) => {
+    const lIn = [...(instrLiveIn[i] || [])].join(', ') || '∅';
+    const lOut = [...(instrLiveOut[i] || [])].join(', ') || '∅';
+    const isDead = ins.op === 'assign' && ins.result && !instrLiveOut[i]?.has(ins.result);
+    html += `<tr class="${isDead?'df-row-dead':''}">
+      <td class="df-num">${i+1}</td>
+      <td class="df-instr">${escHtml(window.instrToStr(ins))}</td>
+      <td class="df-set">${lIn}</td>
+      <td class="df-set">${lOut}</td>
+    </tr>`;
+  });
+  el.innerHTML = html + '</tbody></table>';
+}
 
+function renderInsights(varStats) {
+  const el = document.getElementById('insightTable');
+  if (!el) return;
+  let html = `<table class="df-table"><thead><tr><th>Variable</th><th>Uses</th><th>Defs</th><th>Status</th></tr></thead><tbody>`;
+  Object.entries(varStats).forEach(([v, s]) => {
+    const status = s.uses === 0 ? '<span class="df-tag-dead">Unused</span>' : (s.constVal !== null ? '<span class="df-tag-const">Constant</span>' : '<span class="df-tag-live">Live</span>');
+    html += `<tr>
+      <td class="text-cyan mono"><strong>${v}</strong></td>
+      <td>${s.uses}</td>
+      <td>${s.defs}</td>
+      <td>${status}</td>
+    </tr>`;
+  });
+  el.innerHTML = html + '</tbody></table>';
+}
+
+// ── Compare Tab (Premium) ─────────────────────────────────────
+function renderCompare(original, optimized) {
+  const container = document.getElementById('compareContainer');
+  if (!container) return;
+  const max = Math.max(original.length, optimized.length);
+  let html = `<div class="compare-grid"><div class="compare-col"><div class="compare-hdr">Original Code</div>`;
+  for(let i=0; i<max; i++) {
+    html += `<div class="compare-row"><span class="compare-num">${i+1}</span><span class="compare-code">${original[i]?escHtml(window.instrToStr(original[i])):''}</span></div>`;
+  }
+  html += `</div><div class="compare-col"><div class="compare-hdr">Optimized Code</div>`;
+  for(let i=0; i<max; i++) {
+    const origStr = original[i] ? window.instrToStr(original[i]) : '';
+    const optStr = optimized[i] ? window.instrToStr(optimized[i]) : '';
+    const changed = origStr !== optStr;
+    html += `<div class="compare-row ${changed?'changed':''}"><span class="compare-num">${i+1}</span><span class="compare-code">${optStr || ''}</span></div>`;
+  }
+  html += `</div></div>`;
+  container.innerHTML = html;
+}
+
+// ── Report Tab (Premium) ──────────────────────────────────────
+function renderReport(original, passes, optimized, oLevel) {
+  const el = document.getElementById('reportContent');
+  if (!el) return;
+  const changedPasses = passes.filter(p => p.changes.length > 0);
+  let html = `
+    <div class="report-header">
+      <div class="report-title">Compilation Report</div>
+      <div class="report-level">Optimization Level: <strong>O${oLevel}</strong></div>
+    </div>
+    <div class="report-section-title">Global Summary</div>
+    <div class="report-summary-grid">
+      <div class="rs-card"><span class="rs-label">Original</span><span class="rs-val">${original.length}</span></div>
+      <div class="rs-card" style="border-color:var(--green)"><span class="rs-label">Optimized</span><span class="rs-val text-green">${optimized.length}</span></div>
+      <div class="rs-card" style="border-color:var(--purple)"><span class="rs-label">Reduction</span><span class="rs-val text-purple">${original.length?Math.round((original.length-optimized.length)/original.length*100):0}%</span></div>
+    </div>
+    <div class="report-section-title">Pipeline Efficiency</div>
+    <div class="report-rows">`;
+  
+  passes.forEach(p => {
+    const n = p.changes.length;
+    html += `<div class="report-row ${n?'rr-applied':'rr-skipped'}">
+      <span class="rr-icon">${n?'✅':'⏭️'}</span>
+      <span class="rr-name">${p.name}</span>
+      <span class="rr-val">${n ? n+' optimizations' : 'No changes'}</span>
+    </div>`;
+  });
+  el.innerHTML = html + `</div>`;
+}
+
+// ── Output Tab ────────────────────────────────────────────────
+function renderOutput(optimized) {
+  const tac = document.getElementById('optimizedTAC');
+  const c = document.getElementById('reconstructedC');
+  if (tac) tac.textContent = optimized.map(ins => window.instrToStr(ins)).join('\n');
+  if (c) c.textContent = '// Optimized Code Output\n' + optimized.map(ins => window.instrToStr(ins)).join('\n');
+}
+
+window.renderDataFlow = renderDataFlow;
+window.renderInsights = renderInsights;
+window.renderCompare = renderCompare;
+window.renderReport = renderReport;
+window.renderOutput = renderOutput;
+window.initExecution = initExecution;
+window.switchTab = switchTab;
+window.execStepForward = execStepForward;
+window.execStepBack = execStepBack;
+window.togglePass = togglePass;
